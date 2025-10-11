@@ -13,7 +13,6 @@
 # ---------------------------
 # БАЗОВЫЕ ИМПОРТЫ
 # ---------------------------
-import os
 import sys
 import asyncio
 import logging
@@ -43,32 +42,42 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.chat_action import ChatActionSender
 from collections import deque
 from contextlib import suppress
-# === ENV LOADING (Render-friendly, single source of truth) ===
+# === ENV LOADING (Render-friendly) ===
 import os
 from dotenv import load_dotenv
 
 def load_env():
     """
-    Пытаемся загрузить переменные в следующем приоритете:
+    Приоритет:
     1) APP_ENV_FILE (если задана)
     2) .env.kit
     3) .env
-    Никаких падений, если файлов нет — Render передаёт переменные через UI.
+    Если ни один не найден — не падаем (Render передаст переменные через UI).
     """
     env_file = os.getenv("APP_ENV_FILE")
     loaded = False
-
     if env_file:
         loaded = load_dotenv(env_file)
         print(f"[ENV] APP_ENV_FILE={env_file} loaded={loaded}")
-
     if not loaded:
         loaded = load_dotenv(".env.kit") or load_dotenv(".env")
         print(f"[ENV] fallback .env.kit/.env loaded={loaded}")
 
-    return loaded
-
 load_env()
+
+# === PATHS ===
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.getenv("DATA_DIR", BASE_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
+print(f"[PATHS] BASE_DIR={BASE_DIR} | DATA_DIR={DATA_DIR}")
+
+# === LOGGING (по желанию) ===
+import logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 
 # ---------------------------
 # НАСТРОЙКИ ИЗ ENV
@@ -96,7 +105,7 @@ SBP_COMMENT_PREFIX = (os.getenv("SBP_COMMENT_PREFIX") or "Order#").strip()
 SBP_RECIPIENT_NAME = (os.getenv("SBP_RECIPIENT_NAME") or "").strip()
 
 OPENAI_API_KEY  = (os.getenv("OPENAI_API_KEY") or "").strip()
-OPENAI_BASE_URL = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.ai/v1").strip()
+OPENAI_BASE_URL = (os.getenv("OPENAI_BASE_URL") or "https://openrouter.ai/api/v1").strip()  # <- фикс
 OPENAI_MODEL    = (os.getenv("OPENAI_MODEL") or "openai/gpt-4o-mini").strip()
 AI_MAX_HISTORY  = int(os.getenv("AI_MAX_HISTORY") or 6)
 
