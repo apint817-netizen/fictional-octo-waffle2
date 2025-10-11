@@ -43,86 +43,75 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.chat_action import ChatActionSender
 from collections import deque
 from contextlib import suppress
+# === ENV LOADING (Render-friendly, single source of truth) ===
+import os
 from dotenv import load_dotenv
 
-# приоритет: переменная APP_ENV_FILE → .env.kit → .env
-env_file = os.getenv("APP_ENV_FILE", None)
-if env_file:
-    ok = load_dotenv(env_file)
-else:
-    ok = load_dotenv(".env.kit") or load_dotenv(".env")
+def load_env():
+    """
+    Пытаемся загрузить переменные в следующем приоритете:
+    1) APP_ENV_FILE (если задана)
+    2) .env.kit
+    3) .env
+    Никаких падений, если файлов нет — Render передаёт переменные через UI.
+    """
+    env_file = os.getenv("APP_ENV_FILE")
+    loaded = False
 
-if not ok:
-    raise RuntimeError("Не найден файл окружения: укажи APP_ENV_FILE или добавь .env.kit / .env")
+    if env_file:
+        loaded = load_dotenv(env_file)
+        print(f"[ENV] APP_ENV_FILE={env_file} loaded={loaded}")
 
-# ---------------------------
-# ЗАГРУЗКА .env
-# ---------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# ⬇️ добавь это:
-DATA_DIR = os.getenv("DATA_DIR", BASE_DIR)
-ENV_FILE = os.getenv("APP_ENV_FILE", ".env.kit")  # по умолчанию используем .env.kit
-ENV_PATH = os.path.join(BASE_DIR, ENV_FILE)
-if not os.path.exists(ENV_PATH):
-    print(f"❌ Не найден файл окружения: {ENV_PATH} (укажи APP_ENV_FILE или создай .env.kit)")
-    sys.exit(1)
-load_dotenv(ENV_PATH)
+    if not loaded:
+        loaded = load_dotenv(".env.kit") or load_dotenv(".env")
+        print(f"[ENV] fallback .env.kit/.env loaded={loaded}")
 
-# ⬇️ Настрой логирование ЗДЕСЬ (до Bot/Dispatcher)
-import logging
-logging.basicConfig(level=logging.DEBUG)  # на время отладки
-logging.getLogger("aiohttp.client").setLevel(logging.DEBUG)
-# (по желанию) подробнее по aiogram:
-logging.getLogger("aiogram").setLevel(logging.DEBUG)
+    return loaded
+
+load_env()
 
 # ---------------------------
-# НАСТРОЙКИ ИЗ .env
+# НАСТРОЙКИ ИЗ ENV
 # ---------------------------
 TOKEN_KIT = (os.getenv("BOT_TOKEN_KIT") or "").strip()
 TOKEN = TOKEN_KIT
 if not TOKEN:
-    print(f"❌ BOT_TOKEN_KIT не задан в {ENV_PATH}")
-    sys.exit(1)
+    raise RuntimeError("BOT_TOKEN_KIT обязателен. Заполни его в Render → Environment.")
 
-# Материалы (pdf по file_id или URL)
 PDF_PRESENTATION_FILE_ID = (os.getenv("PDF_PRESENTATION_FILE_ID") or "").strip()
 PDF_PRESENTATION_URL     = (os.getenv("PDF_PRESENTATION_URL") or "").strip()
 PDF_PROMPTS_FILE_ID      = (os.getenv("PDF_PROMPTS_FILE_ID") or "").strip()
-PDF_GUIDE_FILE_ID        = (os.getenv("PDF_GUIDE_FILE_ID") or "").strip()  # поддерживаем как «наследие»
+PDF_GUIDE_FILE_ID        = (os.getenv("PDF_GUIDE_FILE_ID") or "").strip()
 PDF_PROMPTS_URL          = (os.getenv("PDF_PROMPTS_URL") or "").strip()
 PDF_GUIDE_URL            = (os.getenv("PDF_GUIDE_URL") or "").strip()
 
-# Прочее
 BOOSTY_LINK  = os.getenv("BOOSTY_LINK") or ""
 ADMIN_ID     = int(os.getenv("ADMIN_ID") or 0)
 BROADCAST_VERIFIED_ONLY = (os.getenv("BROADCAST_VERIFIED_ONLY", "true").lower() == "true")
 
-# --- СБП-настройки ---
 SBP_QR_FILE_ID     = (os.getenv("SBP_QR_FILE_ID") or "").strip()
 SBP_QR_URL         = (os.getenv("SBP_QR_URL") or "").strip()
 SBP_PRICE_RUB      = int(os.getenv("SBP_PRICE_RUB") or 3500)
 SBP_COMMENT_PREFIX = (os.getenv("SBP_COMMENT_PREFIX") or "Order#").strip()
 SBP_RECIPIENT_NAME = (os.getenv("SBP_RECIPIENT_NAME") or "").strip()
 
-# ИИ-настройки
 OPENAI_API_KEY  = (os.getenv("OPENAI_API_KEY") or "").strip()
-OPENAI_BASE_URL = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
-OPENAI_MODEL    = (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
+OPENAI_BASE_URL = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.ai/v1").strip()
+OPENAI_MODEL    = (os.getenv("OPENAI_MODEL") or "openai/gpt-4o-mini").strip()
 AI_MAX_HISTORY  = int(os.getenv("AI_MAX_HISTORY") or 6)
-DEMO_AI_ENABLED       = (os.getenv("DEMO_AI_ENABLED", "true").lower() == "true")
-DEMO_AI_DAILY_LIMIT = int(os.getenv("DEMO_AI_DAILY_LIMIT") or 5)
-DEMO_AI_COOLDOWN_SEC  = int(os.getenv("DEMO_AI_COOLDOWN_SEC") or 15)
 
-# Брендовые плейсхолдеры (используются в промптах)
+DEMO_AI_ENABLED      = (os.getenv("DEMO_AI_ENABLED", "true").lower() == "true")
+DEMO_AI_DAILY_LIMIT  = int(os.getenv("DEMO_AI_DAILY_LIMIT") or 5)
+DEMO_AI_COOLDOWN_SEC = int(os.getenv("DEMO_AI_COOLDOWN_SEC") or 15)
+
 BRAND_CREATED_AT = os.getenv("BRAND_CREATED_AT") or "N/A"
 BRAND_NAME       = os.getenv("BRAND_NAME") or "AI Business Kit"
 BRAND_OWNER      = os.getenv("BRAND_OWNER") or "Owner"
 BRAND_URL        = os.getenv("BRAND_URL") or "https://example.com"
 BRAND_SUPPORT_TG = os.getenv("BRAND_SUPPORT_TG") or "@support"
 
-# Код продукта (чтоб различать разные боты по переменным окружения)
 PRODUCT_CODE = "KIT"
-print(f"[INIT] ENV={ENV_FILE} | PRODUCT_CODE={PRODUCT_CODE} | BRAND={BRAND_NAME}")
+print(f"[INIT] PRODUCT_CODE={PRODUCT_CODE} | BRAND={BRAND_NAME}")
 
 # ---------------------------
 # ХЕЛПЕР ДЛЯ ОБЯЗАТЕЛЬНЫХ ПЕРЕМЕННЫХ
