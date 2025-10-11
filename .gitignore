@@ -1,0 +1,25 @@
+# venv / IDE
+.venv/
+env/
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+
+# локальные данные и бэкапы
+*.log
+*.tmp
+*.bak
+/data/
+paid_users.json
+kit_assets.json
+paid_users_backup_*.json
+
+# секреты
+.env
+.env.*
+!.env.template   # образец-конфиг можно оставить в репо
+
+# OS/Editors
+.DS_Store
+Thumbs.db
