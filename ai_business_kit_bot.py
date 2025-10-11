@@ -122,6 +122,30 @@ BRAND_SUPPORT_TG = os.getenv("BRAND_SUPPORT_TG") or "@support"
 PRODUCT_CODE = "KIT"
 print(f"[INIT] PRODUCT_CODE={PRODUCT_CODE} | BRAND={BRAND_NAME}")
 
+class _SafeDict(dict):
+    def __missing__(self, key):
+        return "N/A"
+
+def _sanitize_prompt_template(tpl: str) -> str:
+    """
+    Превращает {user_id или N/A} -> {user_id}
+    И в целом урезает всё в фигурных скобках до первого слова-идентификатора.
+    Например: {BRAND_NAME} остаётся без изменений.
+    """
+    return re.sub(r"\{(\w+)[^}]*\}", r"{\1}", tpl)
+
+def _fmt_prompt(tpl: str, **kwargs) -> str:
+    tpl = _sanitize_prompt_template(tpl)
+    base = {
+        "BRAND_CREATED_AT": BRAND_CREATED_AT,
+        "BRAND_NAME":       BRAND_NAME,
+        "BRAND_OWNER":      BRAND_OWNER,
+        "BRAND_URL":        BRAND_URL,
+        "BRAND_SUPPORT_TG": BRAND_SUPPORT_TG,
+    }
+    base.update(kwargs)
+    return tpl.format_map(_SafeDict(base))
+
 # ---------------------------
 # ХЕЛПЕР ДЛЯ ОБЯЗАТЕЛЬНЫХ ПЕРЕМЕННЫХ
 # ---------------------------
