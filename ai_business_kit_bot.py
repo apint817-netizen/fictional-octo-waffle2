@@ -45,6 +45,16 @@ from collections import deque
 from contextlib import suppress
 from dotenv import load_dotenv
 
+# приоритет: переменная APP_ENV_FILE → .env.kit → .env
+env_file = os.getenv("APP_ENV_FILE", None)
+if env_file:
+    ok = load_dotenv(env_file)
+else:
+    ok = load_dotenv(".env.kit") or load_dotenv(".env")
+
+if not ok:
+    raise RuntimeError("Не найден файл окружения: укажи APP_ENV_FILE или добавь .env.kit / .env")
+
 # ---------------------------
 # ЗАГРУЗКА .env
 # ---------------------------
