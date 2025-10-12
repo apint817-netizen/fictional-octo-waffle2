@@ -66,18 +66,68 @@ def load_env():
 load_env()
 
 # === PATHS ===
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.getenv("DATA_DIR", BASE_DIR)
-os.makedirs(DATA_DIR, exist_ok=True)
-print(f"[PATHS] BASE_DIR={BASE_DIR} | DATA_DIR={DATA_DIR}")
-
-# === LOGGING (по желанию) ===
+import os
+from pathlib import Path
 import logging
+
+# === PATHS ===
+BASE_DIR = Path(__file__).parent.resolve()
+DATA_DIR = Path(os.getenv("DATA_DIR") or BASE_DIR)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DATA_FILE = os.getenv("DATA_FILE") or str(DATA_DIR / "paid_users.json")
+ASSETS_FILE = os.getenv("ASSETS_FILE") or str(DATA_DIR / "kit_assets.json")
+
+print(f"[PATHS] BASE_DIR={BASE_DIR} | DATA_DIR={DATA_DIR}")
+print(f"[FILES] DATA_FILE={DATA_FILE} | ASSETS_FILE={ASSETS_FILE}")
+
+# === LOGGING ===
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s | %(levelname)s | %(message)s")
+
+
+# === JSON HELPERS ===
+def _read_json_safe(path: str):
+    """Безопасное чтение JSON (возвращает dict или None при ошибке)."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logging.warning("JSON read failed for %s: %s", path, e)
+        return None  # сигнал о проблеме
+
+
+def _write_json_atomic(path: str, data):
+    """Атомарная запись JSON с резервной копией."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    # резервная копия предыдущего
+    if os.path.exists(path):
+        shutil.copy2(path, f"{path}.bak")
+    os.replace(tmp, path)
+
+def make_backup_zip_bytes() -> tuple[bytes, str]:
+    """Собираем ZIP в память и возвращаем (bytes, filename)."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    zip_name = f"ai_business_bot_backup_{ts}.zip"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        meta = {"created_at": ts, "files": [], "app": "AI Business Kit", "version": "2.0"}
+        for arcname, realpath in BACKUP_FILES.items():
+            try:
+                if os.path.exists(realpath):
+                    zf.write(realpath, arcname)
+                    meta["files"].append(arcname)
+                else:
+                    zf.writestr(arcname + ".missing", "FILE_NOT_FOUND")
+            except Exception as e:
+                zf.writestr(arcname + ".error", str(e))
+        zf.writestr("_meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
+    buf.seek(0)
+    return buf.read(), zip_name
 
 # ---------------------------
 # НАСТРОЙКИ ИЗ ENV
@@ -390,6 +440,9 @@ async def _safe_cb_answer(cb: types.CallbackQuery, text: str = "", show_alert: b
 # ---------------------------
 # СОСТОЯНИЯ FSM
 # ---------------------------
+class AdminRestore(StatesGroup):
+    waiting_file = State()
+    
 class AdminContactStates(StatesGroup):
     selecting_user = State()  # выбор пользователя из списка
     composing_once = State()  # разовое сообщение
@@ -798,17 +851,32 @@ def kb_support() -> InlineKeyboardMarkup:
 
 def kb_admin_panel() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
-         InlineKeyboardButton(text="👥 Пользователи", callback_data="list_users")],
-        [InlineKeyboardButton(text="📥 Покупатели", callback_data="admin_buyers"),
-         InlineKeyboardButton(text="📤 Экспорт CSV", callback_data="admin_export_buyers")],
-        [InlineKeyboardButton(text="👤 Связаться", callback_data="admin_contact_open")],
-        [InlineKeyboardButton(text="✉️ Ответ пользователю", callback_data="admin_reply_prompt"),
-         InlineKeyboardButton(text="📣 Рассылка", callback_data="open_broadcast")],
-        [InlineKeyboardButton(text="🤖 ИИ (админ)", callback_data="ai_admin_open"),
-         InlineKeyboardButton(text="💾 Backup", callback_data="create_backup")],
-        [InlineKeyboardButton(text="🗑 Очистить базу", callback_data="clear_all")],
-        [InlineKeyboardButton(text="↩️ Закрыть", callback_data="back_to_main")]
+        [
+            InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
+            InlineKeyboardButton(text="👥 Пользователи", callback_data="list_users")
+        ],
+        [
+            InlineKeyboardButton(text="📥 Покупатели", callback_data="admin_buyers"),
+            InlineKeyboardButton(text="📤 Экспорт CSV", callback_data="admin_export_buyers")
+        ],
+        [
+            InlineKeyboardButton(text="👤 Связаться", callback_data="admin_contact_open")
+        ],
+        [
+            InlineKeyboardButton(text="✉️ Ответ пользователю", callback_data="admin_reply_prompt"),
+            InlineKeyboardButton(text="📣 Рассылка", callback_data="open_broadcast")
+        ],
+        [
+            InlineKeyboardButton(text="🤖 ИИ (админ)", callback_data="ai_admin_open"),
+            InlineKeyboardButton(text="💾 Backup", callback_data="create_backup"),
+            InlineKeyboardButton(text="♻️ Restore", callback_data="admin_restore")
+        ],
+        [
+            InlineKeyboardButton(text="🗑 Очистить базу", callback_data="clear_all")
+        ],
+        [
+            InlineKeyboardButton(text="↩️ Закрыть", callback_data="back_to_main")
+        ]
     ])
 
 def kb_ai_chat(is_admin: bool) -> InlineKeyboardMarkup:
@@ -874,17 +942,19 @@ async def start_handler(message: types.Message):
         await show_verified_home(message.chat.id)
         return
 
-    # (опционально) отправляем презентацию перед текстом — ВНУТРИ функции
-    PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
-    if PRESENTATION_FILE_ID:
-        with suppress(Exception):
-            await message.answer_document(
-                document=PRESENTATION_FILE_ID,
-                caption="📘 <b>Краткая презентация AI Business Kit</b>\n\nУзнай, как создать свой цифровой продукт с ИИ за один вечер.",
-                parse_mode="HTML"
-            )
+    # 1) Презентация перед текстом (через универсальный хелпер)
+    with suppress(Exception):
+        await _send_document_safely(
+            chat_id=message.chat.id,
+            file_id_env=PDF_PRESENTATION_FILE_ID,   # из .env
+            url=PDF_PRESENTATION_URL,               # из .env
+            filename="AI_Business_Kit_Product_Presentation.pdf",
+            caption="📘 <b>Краткая презентация AI Business Kit</b>\n\nУзнай, как создать свой цифровой продукт с ИИ за один вечер.",
+            cache_key="presentation_file_id",
+            file_id_override=get_asset_file_id("presentation")
+        )
 
-    # основной текст
+    # 2) Основной приветственный текст
     text = (
         "👋 <b>Добро пожаловать в AI Business Kit</b>\n\n"
         "Это готовый инструмент, чтобы запустить свой цифровой продукт с помощью ChatGPT всего за 1 вечер ⚙️\n\n"
@@ -1856,6 +1926,26 @@ async def backup_handler(message: types.Message):
     else:
         await message.answer("❌ Ошибка при создании backup", reply_markup=kb_admin_back())
 
+@dp.message(Command("restore_backup"))
+async def backup_restore_start(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return await message.answer("❌ Нет доступа")
+    await state.set_state(AdminRestore.waiting_file)
+    await message.answer(
+        "♻️ Режим восстановления включён.\n"
+        "Пришлите ZIP (предпочтительно) или один из JSON:\n"
+        "• <code>paid_users.json</code>\n"
+        "• <code>kit_assets.json</code>\n\n"
+        "Отмена: /cancel",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("cancel"))
+async def cancel_restore(message: types.Message, state: FSMContext):
+    if await state.get_state() is not None:
+        await state.clear()
+        return await message.answer("✅ Режим восстановления отменён.")
+
 @dp.message(Command("remove_user"))
 async def remove_user_handler(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -2094,20 +2184,53 @@ async def cb_admin_stats(callback: types.CallbackQuery):
     await callback.message.edit_text(txt, reply_markup=kb_admin_back(), parse_mode="HTML")
 
 @dp.callback_query(F.data == "create_backup")
-async def cb_create_backup(callback: types.CallbackQuery):
+async def create_backup_cb(callback: types.CallbackQuery, state: FSMContext):
+    """Создать ZIP-бэкап и предложить восстановление."""
     if callback.from_user.id != ADMIN_ID:
-        await _safe_cb_answer(callback, "❌ Нет доступа", show_alert=True); return
+        await _safe_cb_answer(callback, "❌ Нет доступа", show_alert=True)
+        return
+
     await _safe_cb_answer(callback)
 
-    backup_file = backup_database()
-    if backup_file:
-        await callback.message.edit_text(
-            f"💾 Backup: <code>{os.path.basename(backup_file)}</code>",
-            reply_markup=kb_admin_back(), parse_mode="HTML"
+    # 1) Создаём бэкап в памяти
+    try:
+        data_bytes, zip_name = make_backup_zip_bytes()
+    except Exception as e:
+        logging.exception("Backup create failed: %s", e)
+        return await bot.send_message(
+            callback.from_user.id,
+            "❌ Ошибка при создании бэкапа.",
+            reply_markup=kb_admin_back()
         )
-    else:
-        await callback.message.edit_text("❌ Ошибка при создании backup", reply_markup=kb_admin_back())
 
+    # 2) Отправляем файл админу
+    try:
+        await bot.send_document(
+            callback.from_user.id,
+            document=types.BufferedInputFile(data_bytes, filename=zip_name),
+            caption=(
+                f"💾 <b>Backup создан:</b> <code>{zip_name}</code>\n\n"
+                "♻️ Чтобы <b>восстановить</b>, пришлите ZIP/JSON <i>ответом</i> на это сообщение "
+                "или используйте команду /restore_backup.\n\n"
+                "Отмена: /cancel"
+            ),
+            parse_mode="HTML",
+            reply_markup=kb_admin_back()
+        )
+
+        # 3) Переводим FSM в состояние ожидания файла
+        await state.set_state(AdminRestore.waiting_file)
+
+        logging.info("[BACKUP] Sent %s to admin %s", zip_name, callback.from_user.id)
+
+    except Exception as e:
+        logging.exception("Send backup failed: %s", e)
+        await bot.send_message(
+            callback.from_user.id,
+            "⚠️ Бэкап создан, но не удалось отправить файл.",
+            reply_markup=kb_admin_back()
+        )
+        
 @dp.callback_query(F.data == "list_users")
 async def cb_list_users(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -2573,6 +2696,71 @@ async def _broadcast_send_to(user_id: int, p: Dict[str, Any]) -> bool:
     except Exception as e:
         logging.warning("Broadcast fail to %s: %s", user_id, e)
         return False
+
+@dp.message(AdminRestore.waiting_file, F.document)
+async def backup_restore_file(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return await message.answer("❌ Нет доступа")
+
+    doc = message.document
+    file_name = (doc.file_name or "").lower()
+
+    # Скачиваем в память
+    file = await bot.get_file(doc.file_id)
+    buf = io.BytesIO()
+    await bot.download_file(file.file_path, buf)
+    buf.seek(0)
+
+    restored, errors = [], []
+
+    try:
+        if file_name.endswith(".zip"):
+            with zipfile.ZipFile(buf) as zf:
+                for arcname, realpath in BACKUP_FILES.items():
+                    if arcname in zf.namelist():
+                        try:
+                            data = json.loads(zf.read(arcname).decode("utf-8"))
+                            if data is None:
+                                raise ValueError("invalid json")
+                            _write_json_atomic(realpath, data)
+                            restored.append(arcname)
+                        except Exception as e:
+                            errors.append(f"{arcname}: {e}")
+        elif file_name.endswith(".json"):
+            # одиночный JSON: определим по имени
+            target = None
+            for arcname, realpath in BACKUP_FILES.items():
+                if file_name == arcname:
+                    target = realpath
+                    break
+            if not target:
+                return await message.answer(
+                    "⚠️ Имя файла не распознано. Ожидаю <code>paid_users.json</code> или <code>kit_assets.json</code>.",
+                    parse_mode="HTML"
+                )
+            data = json.loads(buf.read().decode("utf-8"))
+            _write_json_atomic(target, data)
+            restored.append(file_name)
+        else:
+            return await message.answer("⚠️ Пришлите .zip или .json")
+    except zipfile.BadZipFile:
+        return await message.answer("⚠️ Невалидный ZIP-архив")
+    except json.JSONDecodeError:
+        return await message.answer("⚠️ Невалидный JSON")
+    except Exception as e:
+        logging.exception("Restore failed: %s", e)
+        return await message.answer(f"❌ Ошибка восстановления: {e}")
+
+    await state.clear()
+    ok_list = "• " + "\n• ".join(restored) if restored else "—"
+    err_list = "• " + "\n• ".join(errors) if errors else "—"
+    await message.answer(
+        "✅ Восстановление завершено.\n\n"
+        f"<b>Обновлены:</b>\n{ok_list}\n\n"
+        f"<b>Ошибки:</b>\n{err_list}\n\n"
+        "ℹ️ Для надёжности перезапусти сервис на Render, если файлы критичны.",
+        parse_mode="HTML"
+    )
 
 @dp.callback_query(F.data == "broadcast_cancel")
 async def broadcast_cancel(callback: types.CallbackQuery, state: FSMContext):
