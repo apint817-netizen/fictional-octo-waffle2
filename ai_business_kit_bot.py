@@ -36,6 +36,7 @@ if sys.platform == "win32":
 
 import requests
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.types import FSInputFile  # добавь импорт
 from aiogram.filters import Command, StateFilter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
@@ -2201,22 +2202,15 @@ async def create_backup_cb(callback: types.CallbackQuery, state: FSMContext):
 
     await _safe_cb_answer(callback)
 
-    # 1) Создаём бэкап в памяти
     try:
-        data_bytes, zip_name = make_backup_zip_bytes()
-    except Exception as e:
-        logging.exception("Backup create failed: %s", e)
-        return await bot.send_message(
-            callback.from_user.id,
-            "❌ Ошибка при создании бэкапа.",
-            reply_markup=kb_admin_back()
-        )
+        # 1) Создаём ZIP на диске
+        zip_path = make_backup_zip_file()
+        zip_name = os.path.basename(zip_path)
 
-    # 2) Отправляем файл админу
-    try:
+        # 2) Отправляем файл с диска (без загрузки в память)
         await bot.send_document(
-            callback.from_user.id,
-            document=types.BufferedInputFile(data_bytes, filename=zip_name),
+            chat_id=callback.from_user.id,
+            document=FSInputFile(zip_path, filename=zip_name),
             caption=(
                 f"💾 <b>Backup создан:</b> <code>{zip_name}</code>\n\n"
                 "♻️ Чтобы <b>восстановить</b>, пришлите ZIP/JSON <i>ответом</i> на это сообщение "
@@ -2227,16 +2221,15 @@ async def create_backup_cb(callback: types.CallbackQuery, state: FSMContext):
             reply_markup=kb_admin_back()
         )
 
-        # 3) Переводим FSM в состояние ожидания файла
+        # 3) Переводим FSM в ожидание файла для восстановления
         await state.set_state(AdminRestore.waiting_file)
-
         logging.info("[BACKUP] Sent %s to admin %s", zip_name, callback.from_user.id)
 
     except Exception as e:
-        logging.exception("Send backup failed: %s", e)
+        logging.exception("Backup create/send failed: %s", e)
         await bot.send_message(
             callback.from_user.id,
-            "⚠️ Бэкап создан, но не удалось отправить файл.",
+            "❌ Ошибка при создании или отправке бэкапа.",
             reply_markup=kb_admin_back()
         )
         
