@@ -259,17 +259,6 @@ AI_SYSTEM_PROMPT_ADMIN_RAW = _must_get(
 print("[PROMPT_USER]", AI_SYSTEM_PROMPT_USER_RAW[:120].replace("\n", " "))
 print("[PROMPT_ADMIN]", AI_SYSTEM_PROMPT_ADMIN_RAW[:120].replace("\n", " "))
 
-def _fmt_prompt(tpl: str, user_id: int, is_admin: bool) -> str:
-    """Подставляем брендовые плейсхолдеры в системный промпт ИИ."""
-    return tpl.format(
-        BRAND_CREATED_AT=BRAND_CREATED_AT,
-        BRAND_NAME=BRAND_NAME,
-        BRAND_OWNER=BRAND_OWNER,
-        BRAND_URL=BRAND_URL,
-        BRAND_SUPPORT_TG=BRAND_SUPPORT_TG,
-        user_id=user_id
-    )
-
 # ---------------------------
 # БАЗЫ ДАННЫХ (JSON файлы)
 # ---------------------------
@@ -2550,17 +2539,17 @@ async def _send_document_safely(
         except Exception as e:
             logging.warning("Cached file_id failed (%s): %s", cache_key, e)
 
-    # 3) скачиваем по URL и отправляем как bytes
+    # 3) отдаём URL напрямую — Telegram сам скачает (трафик Render ≈ 0)
     if url:
-        data = await _download_bytes_async(url)  # <-- тут был синхронный вызов, заменили на await
-        if data:
-            try:
-                msg = await bot.send_document(
-                    chat_id,
-                    document=types.BufferedInputFile(data, filename=filename),
-                    caption=caption,
-                    parse_mode="HTML"
-                )
+        try:
+            msg = await bot.send_document(
+                chat_id,
+                url,
+                caption=caption,
+                parse_mode="HTML"
+            )
+             # кэшируем новый file_id
+             file_id_new = msg.document.file_id if msg and msg.document else None
                 # кэшируем новый file_id
                 file_id_new = msg.document.file_id if msg and msg.document else None
                 if file_id_new:
