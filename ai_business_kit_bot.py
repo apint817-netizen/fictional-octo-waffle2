@@ -282,6 +282,20 @@ ASSETS_FILE = os.path.join(DATA_DIR, "kit_assets.json")
 bot = Bot(token=TOKEN)
 dp  = Dispatcher(storage=MemoryStorage())
 
+def register_handlers(dp: Dispatcher, bot: Bot):
+    """
+    Здесь РЕГИСТРИРУЕМ все хэндлеры/роутеры/мидлвари.
+    Ничего не запускаем.
+    """
+    # примеры:
+    # dp.message.register(start, CommandStart())
+    # dp.message.register(ping, Command("ping"))
+    # dp.callback_query.register(on_buy_click, F.data == "buy")
+
+    # если у тебя были вызовы dp.startup.register / dp.shutdown.register — их можно оставить здесь:
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
 # ---------------------------
 # БЕЗОПАСНЫЙ ОТВЕТ НА CALLBACK
 # ---------------------------
@@ -3106,21 +3120,15 @@ async def on_shutdown():
 
 # ================= MAIN (замена) =================
 async def main():
-
-    # регистрируем хуки старта/остановки
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
+    # регистрируем хендлеры и хуки
+    register_handlers(dp, bot)
 
     try:
-        # ключевая часть: даём aioграмму работать, но
-        # перехватываем корректную отмену, чтобы не было «простыни»
         await dp.start_polling(bot)
     except asyncio.CancelledError:
         logging.info("Polling cancelled (shutdown).")
-        # пробрасываем дальше, чтобы asyncio.run завершил цикл корректно
         raise
     finally:
-        # чистое закрытие стораджа FSM и HTTP-сессии бота
         with suppress(Exception):
             await dp.fsm.storage.close()
         with suppress(Exception):
@@ -3128,6 +3136,10 @@ async def main():
 
 if __name__ == "__main__":
     try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("👋 Stopped by sarkis_20032")
+
         asyncio.run(main())
     except KeyboardInterrupt:
         print("👋 Stopped by sarkis_20032")
