@@ -2970,8 +2970,9 @@ async def pay_sbp_handler(callback: types.CallbackQuery, state: FSMContext):
         f"Сумма: <b>{SBP_PRICE_RUB} ₽</b>\n"
         f"Номер заказа: <code>{order_id}</code>\n\n"
         "1️⃣ Отсканируйте QR\n"
-        "2️⃣ Оплатите\n"
-        "3️⃣ Пришлите сюда <b>скрин чека</b>\n"
+        "2️⃣ Впишите комментарий:""номер заказа"" оплата за набор"\n"
+        "3️⃣ Оплатите\n"
+        "4️⃣ Пришлите сюда <b>скрин чека</b>\n"
     )
 
     qr_file_id = get_sbp_qr_file_id()
