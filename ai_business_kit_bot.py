@@ -2474,26 +2474,10 @@ async def broadcast_do_send(callback: types.CallbackQuery, state: FSMContext):
         f"📣 Готово.\n\n✅ Успешно: {ok}\n❌ Ошибок: {fail}\n👥 Всего: {total}",
         reply_markup=kb_admin_back()
     )
-
+    
 # ---------------------------
 # ВЫДАЧА ФАЙЛОВ (надёжная)
 # ---------------------------
-# ---------------------------
-# ВЫДАЧА ФАЙЛОВ (надёжная)
-# ---------------------------
-async def _download_bytes_async(url: str) -> Optional[bytes]:
-    """Асинхронно скачиваем файл по URL (короткий таймаут)."""
-    try:
-        timeout = aiohttp.ClientTimeout(total=12)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as r:
-                if r.status == 200:
-                    return await r.read()
-        return None
-    except Exception as e:
-        logging.warning("Download error for %s: %s", url, e)
-        return None
-
 async def _send_document_safely(
     chat_id: int,
     file_id_env: str,
@@ -2504,13 +2488,14 @@ async def _send_document_safely(
     file_id_override: Optional[str] = None
 ):
     """
-    Стратегия отправки:
+    Стратегия отправки (экономим трафик):
     0) file_id_override (kit_assets.json, /bind_*) — самый приоритетный
     1) file_id из .env
     2) персональный кэш file_id (paid_users.json)
-    3) скачать по URL → отправить → закэшировать file_id
-    4) fallback: просто отправить ссылку текстом
+    3) передать URL напрямую (Telegram сам скачает) → закэшировать file_id
+    4) fallback: отправить ссылку текстом
     """
+
     # 0) override
     if file_id_override:
         try:
@@ -2527,9 +2512,9 @@ async def _send_document_safely(
         except Exception as e:
             logging.warning("ENV file_id failed (%s): %s", cache_key, e)
 
-    # 2) кэшированный file_id
+    # 2) кэшированный file_id (персонально на пользователя)
     users = load_paid_users()
-    rec = users.get(str(chat_id), {})
+    rec = users.get(str(chat_id), {}) if isinstance(users, dict) else {}
     cache = rec.get("cache", {})
     file_id_cached = cache.get(cache_key)
     if file_id_cached:
@@ -2539,7 +2524,7 @@ async def _send_document_safely(
         except Exception as e:
             logging.warning("Cached file_id failed (%s): %s", cache_key, e)
 
-    # 3) отдаём URL напрямую — Telegram сам скачает (трафик Render ≈ 0)
+    # 3) отдаём URL напрямую — Telegram сам скачает (трафик Render ≈ 0) и кэшируем новый file_id
     if url:
         try:
             msg = await bot.send_document(
@@ -2548,22 +2533,23 @@ async def _send_document_safely(
                 caption=caption,
                 parse_mode="HTML"
             )
-             # кэшируем новый file_id
-             file_id_new = msg.document.file_id if msg and msg.document else None
-                # кэшируем новый file_id
-                file_id_new = msg.document.file_id if msg and msg.document else None
+            # кэшируем новый file_id
+            try:
+                file_id_new = msg.document.file_id if (msg and getattr(msg, "document", None)) else None
                 if file_id_new:
                     users = load_paid_users()
-                    rec = users.get(str(chat_id), {})
+                    rec = users.get(str(chat_id), {}) if isinstance(users, dict) else {}
                     rec.setdefault("cache", {})
                     rec["cache"][cache_key] = file_id_new
                     users[str(chat_id)] = rec
                     save_users(users)
-                return msg
             except Exception as e:
-                logging.warning("Send as bytes failed (%s): %s", cache_key, e)
+                logging.warning("Cache update after URL send failed (%s): %s", cache_key, e)
+            return msg
+        except Exception as e:
+            logging.warning("Send by URL failed (%s): %s", cache_key, e)
 
-    # 4) чистая ссылка
+    # 4) чистая ссылка (последний шанс)
     if url:
         await bot.send_message(chat_id, f"{caption}\n{url}", parse_mode="HTML")
     else:
