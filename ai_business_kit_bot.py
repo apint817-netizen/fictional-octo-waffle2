@@ -429,31 +429,6 @@ ASSETS_FILE = os.path.join(DATA_DIR, "kit_assets.json")
 bot = Bot(token=TOKEN)
 dp  = Dispatcher(storage=MemoryStorage())
 
-def register_handlers(dp: Dispatcher, bot: Bot):
-    """
-    Здесь РЕГИСТРИРУЕМ все хэндлеры/роутеры/мидлвари.
-    Ничего не запускаем.
-    """
-    # системные хуки
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-
-    # --- Админ: BACKUP/RESTORE ---
-    # Кнопка "💾 Backup" в админ-меню
-    dp.callback_query.register(create_backup_cb, F.data == "create_backup")
-
-    # Кнопка "♻️ Restore" в админ-меню (включает режим восстановления)
-    dp.callback_query.register(admin_restore_cb, F.data == "admin_restore")
-
-    # Команды (дублируют функциональность кнопок, удобно с клавиатуры)
-    dp.message.register(backup_handler, Command("backup"))
-    dp.message.register(backup_restore_start, Command("restore_backup"))
-    dp.message.register(cancel_restore, Command("cancel"))
-
-    # Приём файла для восстановления — СНАЧАЛА state-обработчик,
-    # чтобы его не перекрыли более общие хэндлеры документов/сообщений
-    dp.message.register(backup_restore_file, AdminRestore.waiting_file & F.document)
-
 # ---------------------------
 # БЕЗОПАСНЫЙ ОТВЕТ НА CALLBACK
 # ---------------------------
@@ -1970,6 +1945,27 @@ async def backup_restore_start(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
 
+@dp.callback_query(F.data == "admin_restore")
+async def admin_restore_cb(callback: types.CallbackQuery, state: FSMContext):
+    """Запуск восстановления из админ-панели (аналог команды /restore_backup)."""
+    if callback.from_user.id != ADMIN_ID:
+        await _safe_cb_answer(callback, "❌ Нет доступа", show_alert=True)
+        return
+
+    await _safe_cb_answer(callback)
+
+    # ставим то же состояние, что и у команды /restore_backup
+    await state.set_state(AdminRestore.waiting_file)
+    await bot.send_message(
+        callback.from_user.id,
+        "♻️ Режим восстановления включён.\n"
+        "Пришлите ZIP (предпочтительно) или один из JSON:\n"
+        "• <code>paid_users.json</code>\n"
+        "• <code>kit_assets.json</code>\n\n"
+        "Отмена: /cancel",
+        parse_mode="HTML"
+    )    
+
 @dp.message(Command("cancel"))
 async def cancel_restore(message: types.Message, state: FSMContext):
     if await state.get_state() is not None:
@@ -3432,6 +3428,19 @@ async def on_shutdown():
         logging.info("[HEARTBEAT] stopped")
 
 # ================= MAIN (замена) =================
+def register_handlers(dp: Dispatcher, bot: Bot):
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
+    # Admin: BACKUP / RESTORE
+    dp.callback_query.register(create_backup_cb, F.data == "create_backup")
+    dp.callback_query.register(admin_restore_cb, F.data == "admin_restore")
+
+    dp.message.register(backup_handler, Command("backup"))
+    dp.message.register(backup_restore_start, Command("restore_backup"))
+    dp.message.register(cancel_restore, Command("cancel"))
+    dp.message.register(backup_restore_file, AdminRestore.waiting_file & F.document)
+
 async def main():
     # регистрируем хендлеры и хуки
     register_handlers(dp, bot)
