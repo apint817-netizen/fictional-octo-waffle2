@@ -2681,10 +2681,11 @@ async def _send_document_safely(
         await bot.send_message(chat_id, f"{caption}\n(файл временно недоступен)", parse_mode="HTML")
     return None
 
+# убедись, что сверху файла есть: import os
 async def send_files_to_user(user_id: int, include_presentation: bool = False):
     """
     Комплект выдачи после подтверждения:
-    - Всегда: промпты + ГАЙД + шаблон бота + README
+    - Всегда: промпты + ГАЙД (PDF) + шаблон бота + README
     - Опционально: презентация (обычно не шлём после оплаты и при повторной выдаче)
     """
     # 1) Промпты
@@ -2698,8 +2699,17 @@ async def send_files_to_user(user_id: int, include_presentation: bool = False):
         file_id_override=get_asset_file_id("prompts")
     )
 
-    # 2) Гайд по запуску — теперь: PPTX приоритетно, PDF как fallback
-await _send_guide_pack(user_id)
+    # 2) Гайд по запуску (Только PDF)
+    await _send_document_safely(
+        chat_id=user_id,
+        file_id_env=os.getenv("PDF_GUIDE_FILE_ID"),
+        url=os.getenv("PDF_GUIDE_URL"),
+        filename="AI_Business_Bot_Launch_Guide.pdf",
+        caption="🧭 <b>Гайд по запуску бота (шаг за шагом)</b>\n"
+                "Полная инструкция по установке, настройке и запуску шаблонного бота.",
+        cache_key="guide_file_id",
+        file_id_override=get_asset_file_id("guide")
+    )
 
     # 3) Презентация — только если явно разрешили (обычно False)
     if include_presentation:
@@ -2800,7 +2810,6 @@ await _send_guide_pack(user_id)
         )
     except Exception as e:
         logging.warning("Notify admin about files sent failed: %s", e)
-
 
 # ---------------------------
 # КОНТЕНТ: шаблон бота + README файла
