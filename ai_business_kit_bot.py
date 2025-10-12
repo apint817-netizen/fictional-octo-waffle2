@@ -14,12 +14,14 @@
 # БАЗОВЫЕ ИМПОРТЫ
 # ---------------------------
 import sys
+import tempfile
 import asyncio
 import logging
 import json
 import re
 import csv
 import io
+import zipfile
 import functools
 import aiohttp
 import random
@@ -109,14 +111,20 @@ def _write_json_atomic(path: str, data):
         shutil.copy2(path, f"{path}.bak")
     os.replace(tmp, path)
 
-def make_backup_zip_bytes() -> tuple[bytes, str]:
-    """Собираем ZIP в память и возвращаем (bytes, filename)."""
+def make_backup_zip_file() -> str:
+    """Создать ZIP-бэкап как временный файл на диске и вернуть путь."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_name = f"ai_business_bot_backup_{ts}.zip"
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    tmp_dir = os.path.join(DATA_DIR, "backups")
+    os.makedirs(tmp_dir, exist_ok=True)
+    zip_path = os.path.join(tmp_dir, zip_name)
+
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         meta = {"created_at": ts, "files": [], "app": "AI Business Kit", "version": "2.0"}
-        for arcname, realpath in BACKUP_FILES.items():
+        for arcname, realpath in {
+            "paid_users.json": DATA_FILE,
+            "kit_assets.json": ASSETS_FILE,
+        }.items():
             try:
                 if os.path.exists(realpath):
                     zf.write(realpath, arcname)
@@ -126,9 +134,10 @@ def make_backup_zip_bytes() -> tuple[bytes, str]:
             except Exception as e:
                 zf.writestr(arcname + ".error", str(e))
         zf.writestr("_meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
-    buf.seek(0)
-    return buf.read(), zip_name
 
+    logging.info("[BACKUP] File created: %s", zip_path)
+    return zip_path
+    
 # ---------------------------
 # НАСТРОЙКИ ИЗ ENV
 # ---------------------------
