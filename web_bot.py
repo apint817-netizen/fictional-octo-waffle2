@@ -1,43 +1,34 @@
-# web_bot.py
+# web_bot.py (фрагмент ключевых мест)
+
 import os
-import asyncio
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
+from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 
-# 1) Загружаем переменные (файл не обязателен — Render ENV ок)
 load_dotenv(".env.kit") or load_dotenv(".env")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN_KIT") or os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN_KIT обязателен (Render → Environment)")
+    raise RuntimeError("BOT_TOKEN_KIT обязателен")
 
-BASE_URL = os.getenv("BASE_URL")  # твой https://<app>.onrender.com
+BASE_URL = (os.getenv("BASE_URL") or "").strip().rstrip("/")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 PORT = int(os.getenv("PORT", "10000"))
 
-# 2) Создаём bot/dp и РЕГИСТРИРУЕМ твои хэндлеры
-from aiogram.client.default import DefaultBotProperties
-
-bot = Bot(
-    token=BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode="HTML")
-)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# ---- ВАЖНО ----
-# Подключи регистрацию своих хэндлеров.
-# Если в ai_business_kit_bot.py есть функция register_handlers(dp) – импортни:
-try:
-    from ai_business_kit_bot import register_handlers  # <- сделай такую функцию, см. ниже
-    register_handlers(dp, bot)  # передай bot, если нужно
-except ImportError:
-    # fallback: если нет отдельной функции, тут можно кратко зарегистрировать минимум:
-    pass
+from ai_business_kit_bot import bot as _real_bot, dp as _real_dp, register_handlers
+# используем твои хэндлеры
+register_handlers(dp, bot)
 
-# 3) FastAPI-приложение + обработчик вебхука
 app = FastAPI()
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
 
 @app.post(f"/webhook/{WEBHOOK_SECRET}")
 async def telegram_webhook(request: Request):
@@ -48,8 +39,27 @@ async def telegram_webhook(request: Request):
 
 @app.on_event("startup")
 async def on_startup():
-    assert BASE_URL, "BASE_URL обязателен (Render URL вида https://<app>.onrender.com)"
-    await bot.set_webhook(f"{BASE_URL}/webhook/{WEBHOOK_SECRET}", drop_pending_updates=True)
+    # Если BASE_URL задан — ставим вебхук.
+    if BASE_URL:
+        wh = f"{BASE_URL}/webhook/{WEBHOOK_SECRET}"
+        await bot.set_webhook(wh, drop_pending_updates=True)
+        print(f"[WEBHOOK] set to {wh}")
+    else:
+        # Не падаем. Ждём ручной установки /set-webhook
+        print("[WEBHOOK] BASE_URL не задан, сервер запущен, ждём /set-webhook")
+
+@app.get("/set-webhook")
+async def set_webhook(request: Request, base: str | None = None):
+    """
+    Ручная установка вебхука:
+    - /set-webhook?base=https://fictional-octo-waffle2.onrender.com
+    или
+    - просто /set-webhook (тогда возьмём из Host-заголовка текущего запроса)
+    """
+    base_url = (base or BASE_URL or f"{request.url.scheme}://{request.headers.get('host')}").rstrip("/")
+    wh = f"{base_url}/webhook/{WEBHOOK_SECRET}"
+    await bot.set_webhook(wh, drop_pending_updates=True)
+    return {"ok": True, "webhook": wh}
 
 if __name__ == "__main__":
     import uvicorn
