@@ -82,16 +82,16 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 TMP_DIR = os.path.join(DATA_DIR, "tmp_restore")
 os.makedirs(TMP_DIR, exist_ok=True)
 
-BACKUP_FILES = {
-    "paid_users.json": DATA_FILE,
-    "kit_assets.json": ASSETS_FILE,
-}
-
 DATA_FILE = os.getenv("DATA_FILE") or str(DATA_DIR / "paid_users.json")
 ASSETS_FILE = os.getenv("ASSETS_FILE") or str(DATA_DIR / "kit_assets.json")
 
 print(f"[PATHS] BASE_DIR={BASE_DIR} | DATA_DIR={DATA_DIR}")
 print(f"[FILES] DATA_FILE={DATA_FILE} | ASSETS_FILE={ASSETS_FILE}")
+
+BACKUP_FILES = {
+    "paid_users.json": DATA_FILE,
+    "kit_assets.json": ASSETS_FILE,
+}
 
 # === LOGGING ===
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
