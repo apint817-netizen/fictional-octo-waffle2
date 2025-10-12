@@ -18,7 +18,12 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 PORT = int(os.getenv("PORT", "10000"))
 
 # 2) Создаём bot/dp и РЕГИСТРИРУЕМ твои хэндлеры
-bot = Bot(BOT_TOKEN, parse_mode="HTML")
+from aiogram.client.default import DefaultBotProperties
+
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
 dp = Dispatcher()
 
 # ---- ВАЖНО ----
