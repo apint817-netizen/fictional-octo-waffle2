@@ -225,6 +225,40 @@ async def _send_sbp_qr(chat_id: int, order_id: str):
             return
     await bot.send_message(chat_id, "⚠️ QR временно недоступен. Свяжитесь с поддержкой: " + BRAND_SUPPORT_TG)
 
+import os  # если не импортирован
+
+async def _send_guide_pack(user_id: int):
+    """
+    Пытаемся отправить PPTX-версию гайда. Если нет — падаем на PDF.
+    Приоритет: override (assets) -> ENV file_id -> ENV url.
+    """
+    # 1) Пробуем PPTX
+    sent = await _send_document_safely(
+        chat_id=user_id,
+        file_id_env=os.getenv("GUIDE_PPTX_FILE_ID"),
+        url=os.getenv("GUIDE_PPTX_URL"),
+        filename="How_to_Launch_Telegram_Bot_UpgradeLab_2025.pptx",
+        caption="🧭 <b>Гайд по запуску бота (PPTX)</b>\nОткройте, чтобы пройти все шаги с нуля.",
+        cache_key="guide_pptx_file_id",
+        file_id_override=get_asset_file_id("guide_pptx")
+    )
+
+    # _send_document_safely должен возвращать True/False — если у тебя он без возврата,
+    # просто оберни в try/except и считай отправило.
+    if sent:
+        return
+
+    # 2) Fallback на PDF
+    await _send_document_safely(
+        chat_id=user_id,
+        file_id_env=os.getenv("PDF_GUIDE_FILE_ID"),
+        url=os.getenv("PDF_GUIDE_URL"),
+        filename="AI_Business_Bot_Template_QuickStart_RU.pdf",
+        caption="🧭 <b>Гайд по запуску бота (PDF)</b>\nПошаговая инструкция для новичков.",
+        cache_key="guide_file_id",
+        file_id_override=get_asset_file_id("guide")
+    )
+
 def _today_key() -> str:
     return datetime.now().strftime("%Y%m%d")
 
@@ -249,6 +283,11 @@ def _demo_register_hit(uid: int):
 AI_SYSTEM_PROMPT_USER_DEMO_RAW = os.getenv("AI_SYSTEM_PROMPT_USER_DEMO") or (
     "Ты — демо-ассистент набора «{BRAND_NAME}». Отвечай кратко, по делу и по-русски. "
     "Не раскрывай приватные материалы, не отправляй файлы/ключи, а в конце дай 1–2 шага, как купить набор."
+)
+
+AI_SYSTEM_PROMPT_UNIVERSAL_RAW = os.getenv("AI_SYSTEM_PROMPT_UNIVERSAL") or (
+    "Ты профессиональный AI-ассистент-исполнитель. Помогаешь пользователю создавать тексты, описания, идеи, "
+    "стратегии и любые материалы. Пиши по-русски, структурно, по делу. Предлагай чёткие шаги и готовые шаблоны."
 )
 
 AI_SYSTEM_PROMPT_USER_RAW = _must_get(
@@ -771,14 +810,15 @@ def _verified_home_text() -> str:
         "🚀 <b>В вашем комплекте:</b>\n"
         "• 100 готовых ChatGPT-промптов для бизнеса и контента\n"
         "• Шаблон Telegram-бота с CRM и автоответами\n"
-        "• PDF-гайд по запуску за 10 минут\n\n"
+        "• PDF-гайд по запуску за 10 минут\n"
+        "• README-файл с инструкциями и рекомендациями по работе\n\n"
         "💡 Используйте эти материалы, чтобы:\n"
         "• Автоматизировать процессы в бизнесе\n"
         "• Создавать и продавать AI-продукты под своим брендом\n"
         "• Развивать личный или клиентский проект через Telegram\n\n"
         "👇 Что можно сделать прямо сейчас:\n"
         "• «🔄 Получить файлы снова» — переотправим материалы\n"
-        "• «🤖 ИИ-помощник» — задавайте вопросы и получайте советы\n"
+        "• «🤖 ИИ-помощник» — два режима: консультант по набору и универсальный реализатор промптов\n"
         "• «💬 Поддержка» — помощь и консультации\n"
         "• «❓ FAQ» — ответы на популярные вопросы"
     )
@@ -816,6 +856,16 @@ async def start_handler(message: types.Message):
         "3️⃣ Отправьте скриншот чека для подтверждения\n\n"
         "⏱ Проверка занимает обычно 5–15 минут"
     )
+
+PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
+
+if PRESENTATION_FILE_ID:
+    with suppress(Exception):
+        await message.answer_document(
+            document=PRESENTATION_FILE_ID,
+            caption="📘 <b>Краткая презентация AI Business Kit</b>\n\nУзнай, как создать свой цифровой продукт с ИИ за один вечер.",
+            parse_mode="HTML"
+        )    
 
     # 👇 правильный отступ — 4 пробела
     await message.answer(
@@ -929,10 +979,11 @@ async def support_manager_info(callback: types.CallbackQuery):
 async def ai_open_demo_cb(callback: types.CallbackQuery, state: FSMContext):
     await _safe_cb_answer(callback)
     await state.set_state(AIChatStates.chatting)
-    await state.update_data(ai_is_admin=False)
+    # важное: фиксируем режим «универсал»
+    await state.update_data(ai_is_admin=False, ai_mode="universal")
     await callback.message.answer(
-        "🤖 ИИ (демо-режим): готов ответить на вопросы о наборе, оплате и запуске.\n"
-        "❗️ Чтобы активировать полноценный доступ, оплатите комплект.",
+        "🤖 <b>ИИ активен и готов к работе!</b>\n\n"
+        "Это универсальный режим: используйте его, чтобы создавать тексты, идеи, описания и решения для задач прямо здесь.",
         reply_markup=kb_ai_chat(is_admin=False),
         parse_mode="HTML"
     )
@@ -1542,47 +1593,54 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
     logging.info("[AI-HANDLER] enter uid=%s text_len=%s", message.from_user.id, len(message.text or ""))
     data = await state.get_data()
     is_admin = bool(data.get("ai_is_admin"))
+    ai_mode = (data.get("ai_mode") or "").strip()  # 'universal' | ''(consultant by default)
     uid = message.from_user.id
     user_text = (message.text or "").strip()
     if not user_text:
         return
 
     verified = is_user_verified(uid)
-    is_demo = (not verified) and DEMO_AI_ENABLED and (not is_admin)
+
+    # ДЕМО-режим включаем только для консультанта (универсал — без демо-приписок)
+    is_demo_allowed = (not verified) and DEMO_AI_ENABLED and (not is_admin) and (ai_mode != "universal")
 
     # демо-лимиты
-    if is_demo:
+    if is_demo_allowed:
         ok, reason = _demo_quota_ok(uid)
         if not ok:
             logging.info("[AI-HANDLER] demo quota blocked uid=%s reason=%s", uid, reason)
             await _safe_send_answer(message, "⚠️ " + reason, _menu_kb_for(message.from_user.id))
             return
 
-    # короче история в демо
-    desired_hist = max(2, min(6, AI_MAX_HISTORY)) if is_demo else None
+    # История: короче в демо (только для консультанта)
+    desired_hist = max(2, min(6, AI_MAX_HISTORY)) if is_demo_allowed else None
     _push_history(uid, is_admin, "user", user_text, desired=desired_hist)
 
-    # строим сообщения (ВАЖНО: до try/except, чтобы msgs был определён)
-    msgs = _build_messages(uid, is_admin, user_text, is_demo=is_demo)
+    # Строим сообщения
+    msgs = _build_messages(uid, is_admin, user_text, is_demo=is_demo_allowed)
 
-    # «печатает…»; если ChatActionSender упадёт — не мешаем ответу
+    # Если режим «универсал» — подменим system-промпт первой записи
+    if ai_mode == "universal" and msgs and msgs[0].get("role") == "system":
+        msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_UNIVERSAL_RAW, user_id=uid, is_admin=is_admin)
+
+    # «печатает…»
     with suppress(Exception):
         await bot.send_chat_action(message.chat.id, "typing")
 
+    # Унифицируем вызов: используем _ai_complete_demo и для прод-режима, передавая готовые msgs
     try:
-        logging.info("[AI-HANDLER] call model=%s demo=%s admin=%s", OPENAI_MODEL, is_demo, is_admin)
-        reply = await (_ai_complete_demo(uid, is_admin, msgs) if is_demo
-                       else _ai_complete(uid, is_admin, user_text))
+        logging.info("[AI-HANDLER] call model=%s demo_allowed=%s admin=%s mode=%s",
+                     OPENAI_MODEL, is_demo_allowed, is_admin, ai_mode or "consultant")
+        reply = await _ai_complete_demo(uid, is_admin, msgs)
     except Exception as e:
-        logging.warning("ChatActionSender/AI call failed, fallback: %s", e)
-        # на всякий случай делаем прямой повтор запроса
-        reply = await (_ai_complete_demo(uid, is_admin, msgs) if is_demo
-                       else _ai_complete(uid, is_admin, user_text))
+        logging.warning("AI call failed, retry once: %s", e)
+        reply = await _ai_complete_demo(uid, is_admin, msgs)
 
     _push_history(uid, is_admin, "assistant", reply, desired=desired_hist)
 
+    # Демо-приписка только если это консультант и пользователь не верифицирован
     suffix = ""
-    if is_demo and not verified:
+    if is_demo_allowed and not verified:
         suffix = (
             "\n\n—\n<i>Это демо-режим (есть лимит по сообщениям). "
             "Чтобы получить полный доступ и файлы, нажмите «Оплата по СБП (QR)».</i>"
@@ -1595,7 +1653,7 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
         kb_ai_chat(is_admin=is_admin) if verified else _menu_kb_for(message.from_user.id)
     )
 
-    if is_demo:
+    if is_demo_allowed:
         _demo_register_hit(uid)
 
 @dp.message(Command("ai_diag"))
@@ -2169,7 +2227,7 @@ async def approve_payment_handler(callback: types.CallbackQuery):
 
     # Выдаём файлы + уведомляем администратора
     try:
-        await send_files_to_user(user_id)
+        await send_files_to_user(user_id, include_presentation=False)
 
         # После выдачи — показать домашний экран купившего
         with suppress(Exception):
@@ -2623,9 +2681,13 @@ async def _send_document_safely(
         await bot.send_message(chat_id, f"{caption}\n(файл временно недоступен)", parse_mode="HTML")
     return None
 
-async def send_files_to_user(user_id: int):
-    """Комплект выдачи после подтверждения: промпты + презентация + шаблон бота + README (без гайда)."""
-    # 1) Промпты (c приоритетом: override -> ENV -> user cache -> URL -> ссылка)
+async def send_files_to_user(user_id: int, include_presentation: bool = False):
+    """
+    Комплект выдачи после подтверждения:
+    - Всегда: промпты + ГАЙД + шаблон бота + README
+    - Опционально: презентация (обычно не шлём после оплаты и при повторной выдаче)
+    """
+    # 1) Промпты
     await _send_document_safely(
         chat_id=user_id,
         file_id_env=PDF_PROMPTS_FILE_ID,
@@ -2636,23 +2698,26 @@ async def send_files_to_user(user_id: int):
         file_id_override=get_asset_file_id("prompts")
     )
 
-    # 2) Презентация
-    await _send_document_safely(
-        chat_id=user_id,
-        file_id_env=PDF_PRESENTATION_FILE_ID,
-        url=PDF_PRESENTATION_URL,
-        filename="AI_Business_Kit_Product_Presentation.pdf",
-        caption="🖼️ <b>Презентация продукта</b>",
-        cache_key="presentation_file_id",
-        file_id_override=get_asset_file_id("presentation")
-    )
+    # 2) Гайд по запуску — теперь: PPTX приоритетно, PDF как fallback
+await _send_guide_pack(user_id)
 
-    # 3) Шаблон бота (приоритет: привязанный file_id -> локальный файл)
+    # 3) Презентация — только если явно разрешили (обычно False)
+    if include_presentation:
+        await _send_document_safely(
+            chat_id=user_id,
+            file_id_env=PDF_PRESENTATION_FILE_ID,
+            url=PDF_PRESENTATION_URL,
+            filename="AI_Business_Kit_Product_Presentation.pdf",
+            caption="🖼️ <b>Презентация продукта</b>",
+            cache_key="presentation_file_id",
+            file_id_override=get_asset_file_id("presentation")
+        )
+
+    # 4) Шаблон бота (file_id → локальный файл)
     bot_tpl_override = get_asset_file_id("bot_template")
     bot_tpl_sent = False
     try:
         if bot_tpl_override:
-            # Быстрая отправка по file_id
             await bot.send_document(
                 user_id,
                 bot_tpl_override,
@@ -2661,7 +2726,6 @@ async def send_files_to_user(user_id: int):
             )
             bot_tpl_sent = True
         else:
-            # Локальный fallback (прочитаем файл, отправим как bytes и закешируем file_id у пользователя)
             bot_template_code = create_bot_template()
             msg = await bot.send_document(
                 user_id,
@@ -2672,7 +2736,6 @@ async def send_files_to_user(user_id: int):
                 caption="🤖 <b>AI Business Bot Template</b> — готовый код для запуска",
                 parse_mode="HTML"
             )
-            # Персональный кэш file_id
             try:
                 if msg and msg.document and msg.document.file_id:
                     users = load_paid_users()
@@ -2688,13 +2751,12 @@ async def send_files_to_user(user_id: int):
         logging.warning("Send bot template failed for %s: %s", user_id, e)
 
     if not bot_tpl_sent:
-        # В крайнем случае — подсказка
         await bot.send_message(
             user_id,
             "⚠️ Не удалось отправить файл шаблона бота. Напишите в поддержку: " + BRAND_SUPPORT_TG
         )
 
-    # 4) README (текстовый файл)
+    # 5) README
     try:
         readme_text = create_readme()
         await bot.send_document(
@@ -2709,7 +2771,7 @@ async def send_files_to_user(user_id: int):
     except Exception as e:
         logging.warning("Send README failed for %s: %s", user_id, e)
 
-    # 5) Финальное сообщение пользователю + умное меню
+    # 6) Финальное сообщение
     try:
         await bot.send_message(
             user_id,
@@ -2720,7 +2782,7 @@ async def send_files_to_user(user_id: int):
     except Exception:
         pass
 
-    # 6) Уведомление администратору
+    # 7) Уведомление админу
     try:
         users = load_paid_users()
         rec = users.get(str(user_id), {}) if isinstance(users, dict) else {}
@@ -2738,6 +2800,7 @@ async def send_files_to_user(user_id: int):
         )
     except Exception as e:
         logging.warning("Notify admin about files sent failed: %s", e)
+
 
 # ---------------------------
 # КОНТЕНТ: шаблон бота + README файла
@@ -3002,8 +3065,8 @@ async def get_files_again_cb(callback: types.CallbackQuery):
         pass
 
     # Отправляем файлы
-    await send_files_to_user(uid)
-
+    await send_files_to_user(callback.from_user.id, include_presentation=False)
+    
     # Уведомляем админа о том, что пользователь запросил повторную выдачу
     try:
         await bot.send_message(
