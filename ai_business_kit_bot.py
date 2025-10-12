@@ -17,6 +17,7 @@ import sys
 import tempfile
 import asyncio
 import logging
+import shutil
 import json
 import re
 import csv
@@ -77,6 +78,14 @@ import logging
 BASE_DIR = Path(__file__).parent.resolve()
 DATA_DIR = Path(os.getenv("DATA_DIR") or BASE_DIR)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+TMP_DIR = os.path.join(DATA_DIR, "tmp_restore")
+os.makedirs(TMP_DIR, exist_ok=True)
+
+BACKUP_FILES = {
+    "paid_users.json": DATA_FILE,
+    "kit_assets.json": ASSETS_FILE,
+}
 
 DATA_FILE = os.getenv("DATA_FILE") or str(DATA_DIR / "paid_users.json")
 ASSETS_FILE = os.getenv("ASSETS_FILE") or str(DATA_DIR / "kit_assets.json")
@@ -425,14 +434,25 @@ def register_handlers(dp: Dispatcher, bot: Bot):
     Здесь РЕГИСТРИРУЕМ все хэндлеры/роутеры/мидлвари.
     Ничего не запускаем.
     """
-    # примеры:
-    # dp.message.register(start, CommandStart())
-    # dp.message.register(ping, Command("ping"))
-    # dp.callback_query.register(on_buy_click, F.data == "buy")
-
-    # если у тебя были вызовы dp.startup.register / dp.shutdown.register — их можно оставить здесь:
+    # системные хуки
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
+
+    # --- Админ: BACKUP/RESTORE ---
+    # Кнопка "💾 Backup" в админ-меню
+    dp.callback_query.register(create_backup_cb, F.data == "create_backup")
+
+    # Кнопка "♻️ Restore" в админ-меню (включает режим восстановления)
+    dp.callback_query.register(admin_restore_cb, F.data == "admin_restore")
+
+    # Команды (дублируют функциональность кнопок, удобно с клавиатуры)
+    dp.message.register(backup_handler, Command("backup"))
+    dp.message.register(backup_restore_start, Command("restore_backup"))
+    dp.message.register(cancel_restore, Command("cancel"))
+
+    # Приём файла для восстановления — СНАЧАЛА state-обработчик,
+    # чтобы его не перекрыли более общие хэндлеры документов/сообщений
+    dp.message.register(backup_restore_file, AdminRestore.waiting_file & F.document)
 
 # ---------------------------
 # БЕЗОПАСНЫЙ ОТВЕТ НА CALLBACK
