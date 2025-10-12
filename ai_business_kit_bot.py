@@ -79,6 +79,25 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 
+# ---------------------------
+# НАСТРОЙКИ ИЗ ENV
+# ---------------------------
+TOKEN_KIT = (os.getenv("BOT_TOKEN_KIT") or "").strip()
+TOKEN = TOKEN_KIT
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN_KIT обязателен. Заполни его в Render → Environment.")
+
+PDF_PRESENTATION_FILE_ID = (os.getenv("PDF_PRESENTATION_FILE_ID") or "").strip()
+PDF_PRESENTATION_URL     = (os.getenv("PDF_PRESENTATION_URL") or "").strip()
+PDF_PROMPTS_FILE_ID      = (os.getenv("PDF_PROMPTS_FILE_ID") or "").strip()
+PDF_GUIDE_FILE_ID        = (os.getenv("PDF_GUIDE_FILE_ID") or "").strip()
+PDF_PROMPTS_URL          = (os.getenv("PDF_PROMPTS_URL") or "").strip()
+PDF_GUIDE_URL            = (os.getenv("PDF_GUIDE_URL") or "").strip()
+
+BOOSTY_LINK  = os.getenv("BOOSTY_LINK") or ""
+ADMIN_ID     = int(os.getenv("ADMIN_ID") or 0)
+BROADCAST_VERIFIED_ONLY = (os.getenv("BROADCAST_VERIFIED_ONLY", "true").lower() == "true")
+
 HEARTBEAT_ENABLED = (os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true")
 HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "1800"))  # 30 мин по умолчанию
 HEARTBEAT_IMMEDIATE = (os.getenv("HEARTBEAT_IMMEDIATE", "false").lower() == "true")
@@ -115,26 +134,7 @@ async def _heartbeat_loop():
             )
         except Exception as e:
             logging.warning("[HEARTBEAT] send failed: %s", e)
-        await _sleep_with_jitter(HEARTBEAT_INTERVAL_SEC)
-
-# ---------------------------
-# НАСТРОЙКИ ИЗ ENV
-# ---------------------------
-TOKEN_KIT = (os.getenv("BOT_TOKEN_KIT") or "").strip()
-TOKEN = TOKEN_KIT
-if not TOKEN:
-    raise RuntimeError("BOT_TOKEN_KIT обязателен. Заполни его в Render → Environment.")
-
-PDF_PRESENTATION_FILE_ID = (os.getenv("PDF_PRESENTATION_FILE_ID") or "").strip()
-PDF_PRESENTATION_URL     = (os.getenv("PDF_PRESENTATION_URL") or "").strip()
-PDF_PROMPTS_FILE_ID      = (os.getenv("PDF_PROMPTS_FILE_ID") or "").strip()
-PDF_GUIDE_FILE_ID        = (os.getenv("PDF_GUIDE_FILE_ID") or "").strip()
-PDF_PROMPTS_URL          = (os.getenv("PDF_PROMPTS_URL") or "").strip()
-PDF_GUIDE_URL            = (os.getenv("PDF_GUIDE_URL") or "").strip()
-
-BOOSTY_LINK  = os.getenv("BOOSTY_LINK") or ""
-ADMIN_ID     = int(os.getenv("ADMIN_ID") or 0)
-BROADCAST_VERIFIED_ONLY = (os.getenv("BROADCAST_VERIFIED_ONLY", "true").lower() == "true")
+        await _sleep_with_jitter(HEARTBEAT_INTERVAL_SEC)    
 
 SBP_QR_FILE_ID     = (os.getenv("SBP_QR_FILE_ID") or "").strip()
 SBP_QR_URL         = (os.getenv("SBP_QR_URL") or "").strip()
