@@ -1,52 +1,78 @@
-# web_bot.py
+# web_bot.py — запуск ai_business_kit_bot через вебхук на Render
+# =============================================================
+
 import os
+import logging
+import asyncio
 from fastapi import FastAPI, Request
 from aiogram.types import Update
-from dotenv import load_dotenv
+from aiogram import Bot
 
-# 1) ENV
-load_dotenv(".env.kit") or load_dotenv(".env")
-BOT_TOKEN = os.getenv("BOT_TOKEN_KIT") or os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN_KIT обязателен (Render → Environment)")
+# --- Импорт твоего бота и диспетчера ---
+from ai_business_kit_bot import bot, dp, register_handlers, on_startup, on_shutdown
 
-BASE_URL = (os.getenv("BASE_URL") or "").strip().rstrip("/")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
-PORT = int(os.getenv("PORT", "10000"))
-
-# 2) ИМПОРТИРУЕМ ГОТОВЫЕ bot и dp ИЗ ОСНОВНОГО КОДА
-from ai_business_kit_bot import bot, dp, register_handlers  # <-- никаких новых Bot/Dispatcher здесь
-register_handlers(dp, bot)  # регистрируем хэндлеры на ЭТОТ dp/bot
-
+# --- Настройка FastAPI ---
 app = FastAPI()
 
-@app.get("/healthz")
-async def healthz():
-    return {"ok": True}
+# --- Конфигурация логов ---
+logging.basicConfig(level=logging.INFO)
 
+# --- Переменные окружения ---
+BOT_TOKEN = os.getenv("BOT_TOKEN_KIT")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "ul_kit_123secret")
+BASE_URL = os.getenv("BASE_URL", "").rstrip("/")
+
+# =============================================================
+# При старте приложения
+# =============================================================
+@app.on_event("startup")
+async def on_startup_event():
+    assert BASE_URL, "BASE_URL обязателен (Render URL вида https://<app>.onrender.com)"
+    webhook_url = f"{BASE_URL}/webhook/{WEBHOOK_SECRET}"
+
+    # Регистрируем хэндлеры и хуки
+    register_handlers(dp, bot)
+
+    # Настраиваем вебхук
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(webhook_url)
+    logging.info(f"[WEBHOOK] set to {webhook_url}")
+
+    # Инициализация логики бота
+    await on_startup()
+
+# =============================================================
+# Завершение работы
+# =============================================================
+@app.on_event("shutdown")
+async def on_shutdown_event():
+    await on_shutdown()
+    await bot.session.close()
+
+# =============================================================
+# Главная страница
+# =============================================================
+@app.get("/")
+async def root():
+    return {"ok": True, "service": "AI Business Kit Bot"}
+
+# =============================================================
+# Вебхук Telegram
+# =============================================================
 @app.post(f"/webhook/{WEBHOOK_SECRET}")
 async def telegram_webhook(request: Request):
     data = await request.json()
     update = Update.model_validate(data)
-    await dp.feed_update(bot, update)  # тот самый dp/bot из ai_business_kit_bot.py
+    logging.info(f"[WEBHOOK] update type={update.event_type} has_message={bool(update.message)}")
+    await dp.feed_update(bot, update)
     return {"ok": True}
 
-@app.on_event("startup")
-async def on_startup():
-    if BASE_URL:
-        wh = f"{BASE_URL}/webhook/{WEBHOOK_SECRET}"
-        await bot.set_webhook(wh, drop_pending_updates=True)
-        print(f"[WEBHOOK] set to {wh}")
-    else:
-        print("[WEBHOOK] BASE_URL не задан, сервер запущен, зайди /set-webhook")
-
-@app.get("/set-webhook")
-async def set_webhook(request: Request, base: str | None = None):
-    base_url = (base or BASE_URL or f"{request.url.scheme}://{request.headers.get('host')}").rstrip("/")
-    wh = f"{base_url}/webhook/{WEBHOOK_SECRET}"
-    await bot.set_webhook(wh, drop_pending_updates=True)
-    return {"ok": True, "webhook": wh}
-
+# =============================================================
+# Точка входа при локальном запуске
+# =============================================================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+
+    port = int(os.getenv("PORT", 10000))
+    logging.info(f"Starting webhook app on 0.0.0.0:{port}")
+    uvicorn.run("web_bot:app", host="0.0.0.0", port=port)
