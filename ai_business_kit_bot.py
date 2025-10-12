@@ -79,6 +79,44 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 
+HEARTBEAT_ENABLED = (os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true")
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "1800"))  # 30 мин по умолчанию
+HEARTBEAT_IMMEDIATE = (os.getenv("HEARTBEAT_IMMEDIATE", "false").lower() == "true")
+
+# Куда слать “пульс”: по умолчанию — админу
+try:
+    HEARTBEAT_CHAT_ID = int(os.getenv("HEARTBEAT_CHAT_ID") or ADMIN_ID)
+except Exception:
+    HEARTBEAT_CHAT_ID = ADMIN_ID
+
+_heartbeat_task: asyncio.Task | None = None
+
+async def _heartbeat_loop():
+    """Периодически шлём админу «бот активен» + время."""
+    # небольшой джиттер, чтобы при рестарте не бомбить ровно в одно и то же время
+    async def _sleep_with_jitter(base_sec: int):
+        jitter = int(base_sec * 0.1)  # ±10%
+        await asyncio.sleep(max(5, base_sec + random.randint(-jitter, jitter)))
+
+    if HEARTBEAT_IMMEDIATE:
+        with suppress(Exception):
+            ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")
+            await bot.send_message(
+                HEARTBEAT_CHAT_ID,
+                f"✅ Бот запущен и активен (старт: {ts})"
+            )
+
+    while True:
+        try:
+            ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")
+            await bot.send_message(
+                HEARTBEAT_CHAT_ID,
+                f"✅ Бот активен | {ts}"
+            )
+        except Exception as e:
+            logging.warning("[HEARTBEAT] send failed: %s", e)
+        await _sleep_with_jitter(HEARTBEAT_INTERVAL_SEC)
+
 # ---------------------------
 # НАСТРОЙКИ ИЗ ENV
 # ---------------------------
@@ -3158,8 +3196,30 @@ async def on_startup():
         _save_assets({})
     logging.info("📦 База: %s | Кэш: %s", os.path.basename(DATA_FILE), os.path.basename(ASSETS_FILE))
 
+    # Запускаем heartbeat (если включён)
+    global _heartbeat_task
+    if HEARTBEAT_ENABLED and _heartbeat_task is None:
+        try:
+            _heartbeat_task = asyncio.create_task(_heartbeat_loop())
+            logging.info(
+                "[HEARTBEAT] started → interval=%ss, chat_id=%s, immediate=%s",
+                HEARTBEAT_INTERVAL_SEC, HEARTBEAT_CHAT_ID, HEARTBEAT_IMMEDIATE
+            )
+        except Exception as e:
+            logging.warning("[HEARTBEAT] start failed: %s", e)
+
+
 async def on_shutdown():
     logging.info("🛑 Остановка бота...")
+
+    # Останавливаем heartbeat
+    global _heartbeat_task
+    if _heartbeat_task:
+        _heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _heartbeat_task
+        _heartbeat_task = None
+        logging.info("[HEARTBEAT] stopped")
 
 # ================= MAIN (замена) =================
 async def main():
