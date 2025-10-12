@@ -10,3 +10,5 @@ pandas>=2.2.2
 urllib3>=2.2.2
 colorama>=0.4.6
 certifi>=2024.7.4
+fastapi>=0.115.0
+uvicorn>=0.30.0
