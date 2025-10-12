@@ -837,6 +837,17 @@ async def start_handler(message: types.Message):
         await show_verified_home(message.chat.id)
         return
 
+    # (опционально) отправляем презентацию перед текстом — ВНУТРИ функции
+    PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
+    if PRESENTATION_FILE_ID:
+        with suppress(Exception):
+            await message.answer_document(
+                document=PRESENTATION_FILE_ID,
+                caption="📘 <b>Краткая презентация AI Business Kit</b>\n\nУзнай, как создать свой цифровой продукт с ИИ за один вечер.",
+                parse_mode="HTML"
+            )
+
+    # основной текст
     text = (
         "👋 <b>Добро пожаловать в AI Business Kit</b>\n\n"
         "Это готовый инструмент, чтобы запустить свой цифровой продукт с помощью ChatGPT всего за 1 вечер ⚙️\n\n"
@@ -857,23 +868,11 @@ async def start_handler(message: types.Message):
         "⏱ Проверка занимает обычно 5–15 минут"
     )
 
-PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
-
-if PRESENTATION_FILE_ID:
-    with suppress(Exception):
-        await message.answer_document(
-            document=PRESENTATION_FILE_ID,
-            caption="📘 <b>Краткая презентация AI Business Kit</b>\n\nУзнай, как создать свой цифровой продукт с ИИ за один вечер.",
-            parse_mode="HTML"
-        )    
-
-    # 👇 правильный отступ — 4 пробела
     await message.answer(
         text,
         reply_markup=_menu_kb_for(message.from_user.id),
         parse_mode="HTML"
     )
-
 
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
