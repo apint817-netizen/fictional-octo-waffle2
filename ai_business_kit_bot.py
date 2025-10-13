@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 from aiogram.exceptions import TelegramBadRequest
 from typing import Optional, Tuple, Dict, Any, List
 from asyncio import get_running_loop
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from html import escape
 
 if sys.platform == "win32":
