@@ -1971,14 +1971,17 @@ async def ai_open_cmd(message: types.Message, state: FSMContext):
 # «НАЗАД В ГЛАВНОЕ»
 # ---------------------------
 @dp.callback_query(F.data == "back_to_main")
-async def back_to_main(callback: types.CallbackQuery):
+async def back_to_main_cb(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
+
+    PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
+    PRESENTATION_URL = os.getenv("PDF_PRESENTATION_URL")
 
     text = (
         "👋 <b>Добро пожаловать в AI Business Kit</b>\n\n"
         "📘 <b>Краткая презентация + инструкция</b>\n"
         "Узнай, как создать свой цифровой продукт с ИИ за один вечер 🚀\n\n"
-        "💡 <b>Набор поможет вам:</b>\n"
+        "💡 Набор поможет вам:\n"
         "• Автоматизировать рутину и сэкономить время\n"
         "• Создавать контент и идеи для бизнеса\n"
         "• Запустить собственного Telegram-бота без кода\n"
@@ -1995,11 +1998,8 @@ async def back_to_main(callback: types.CallbackQuery):
         "⏱️ Проверка занимает обычно 5–15 минут"
     )
 
-    PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
-    PRESENTATION_URL = os.getenv("PDF_PRESENTATION_URL")
-
     try:
-        # если есть file_id — отправляем как документ
+        # Сначала пробуем отправить презентацию
         if PRESENTATION_FILE_ID:
             await callback.message.answer_document(
                 document=PRESENTATION_FILE_ID,
@@ -2007,7 +2007,6 @@ async def back_to_main(callback: types.CallbackQuery):
                 parse_mode="HTML",
                 reply_markup=_menu_kb_for(callback.from_user.id)
             )
-        # если есть URL — отправляем по ссылке
         elif PRESENTATION_URL:
             await callback.message.answer_document(
                 document=PRESENTATION_URL,
@@ -2015,8 +2014,8 @@ async def back_to_main(callback: types.CallbackQuery):
                 parse_mode="HTML",
                 reply_markup=_menu_kb_for(callback.from_user.id)
             )
-        # fallback: просто текст
         else:
+            # Если нет файла вообще — просто текст
             await callback.message.answer(
                 text,
                 parse_mode="HTML",
@@ -2025,6 +2024,7 @@ async def back_to_main(callback: types.CallbackQuery):
 
     except Exception as e:
         logging.warning(f"[BACK_TO_MAIN] failed to send presentation: {e}")
+        # fallback — текст, если документ не загрузился
         await callback.message.answer(
             text,
             parse_mode="HTML",
