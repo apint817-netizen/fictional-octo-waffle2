@@ -1051,7 +1051,7 @@ def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
         kb.adjust(1, 2, 1)
     return kb.as_markup()
 
-dfrom aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 def kb_ai_choice_for(user_id: int) -> InlineKeyboardMarkup:
     paid = is_user_verified(user_id)
