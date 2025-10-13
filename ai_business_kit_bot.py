@@ -3126,17 +3126,6 @@ async def send_files_to_user(user_id: int, include_presentation: bool = False):
     except Exception as e:
         logging.warning("Send README failed for %s: %s", user_id, e)
 
-    # 6) Финальное сообщение
-    try:
-        await bot.send_message(
-            user_id,
-            "✅ Готово! Если нужна помощь — нажмите «Поддержка».",
-            reply_markup=_menu_kb_for(user_id),
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
-
     # 7) Уведомление админу
     try:
         users = load_paid_users()
