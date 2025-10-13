@@ -1051,8 +1051,10 @@ def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
         kb.adjust(1, 2, 1)
     return kb.as_markup()
 
-async def kb_ai_choice_for(user_id: int) -> InlineKeyboardMarkup:
-    paid = await is_user_verified(user_id)
+dfrom aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+def kb_ai_choice_for(user_id: int) -> InlineKeyboardMarkup:
+    paid = is_user_verified(user_id)
     rows = []
     if not paid:
         rows.append([InlineKeyboardButton(text="ℹ️ ИИ: О бренде", callback_data="ai_brand_open")])
@@ -1373,7 +1375,7 @@ async def ai_pay_open_cb(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "ai_choice")
 async def ai_choice_cb(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
-    kb = await kb_ai_choice_for(callback.from_user.id)
+    kb = kb_ai_choice_for(callback.from_user.id)
     await safe_edit(
         callback.message,
         text="Выбери режим работы ИИ 👇" if callback.message.text is not None else None,
