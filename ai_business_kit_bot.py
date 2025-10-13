@@ -1918,18 +1918,54 @@ async def clear_db_handler(message: types.Message):
     await message.answer(text, reply_markup=kb_admin_back(), parse_mode="HTML")
 
 @dp.message(Command("backup"))
-async def backup_handler(message: types.Message):
+async def backup_handler(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         await message.answer("❌ Нет доступа")
         return
-    backup_file = backup_database()
-    if backup_file:
-        await message.answer(
-            f"💾 <b>Backup:</b> <code>{os.path.basename(backup_file)}</code>",
-            reply_markup=kb_admin_back(), parse_mode="HTML"
+
+    try:
+        # 1) Создаём ZIP с paid_users.json и kit_assets.json
+        zip_path = make_backup_zip_file()
+        zip_name = os.path.basename(zip_path)
+
+        # 2) Отправляем ZIP как документ
+        await bot.send_document(
+            chat_id=message.chat.id,
+            document=FSInputFile(zip_path, filename=zip_name),
+            caption=(
+                f"💾 <b>Backup создан:</b> <code>{zip_name}</code>\n\n"
+                "♻️ Для восстановления пришлите этот ZIP <i>ответом</i> на это сообщение\n"
+                "или используйте команду /restore_backup и загрузите ZIP.\n\n"
+                "Отмена восстановления: /cancel"
+            ),
+            parse_mode="HTML",
+            reply_markup=kb_admin_back()
         )
-    else:
-        await message.answer("❌ Ошибка при создании backup", reply_markup=kb_admin_back())
+
+        # Переводим FSM в ожидание файла (как в create_backup_cb),
+        # чтобы админ мог сразу залить файл ответом на это же сообщение
+        await state.set_state(AdminRestore.waiting_file)
+
+    except Exception as e:
+        logging.exception("Backup (ZIP) create/send failed: %s", e)
+        await message.answer("❌ Ошибка при создании или отправке бэкапа.", reply_markup=kb_admin_back())
+
+@dp.message(Command("assets_debug"))
+async def assets_debug(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return await message.answer("❌ Нет доступа")
+    d = _load_assets()
+    keys = ", ".join(sorted(d.keys())) or "—"
+    await message.answer(
+        "🧩 <b>kit_assets.json</b>\n"
+        f"Ключи: <code>{keys}</code>\n\n"
+        f"prompts: {bool((d.get('prompts') or {}).get('file_id'))}\n"
+        f"guide: {bool((d.get('guide') or {}).get('file_id'))}\n"
+        f"presentation: {bool((d.get('presentation') or {}).get('file_id'))}\n"
+        f"bot_template: {bool((d.get('bot_template') or {}).get('file_id'))}\n"
+        f"sbp_qr: {bool((d.get('sbp_qr') or {}).get('file_id'))}",
+        parse_mode="HTML"
+    )
 
 @dp.message(Command("restore_backup"))
 async def backup_restore_start(message: types.Message, state: FSMContext):
