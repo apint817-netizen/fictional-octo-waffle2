@@ -10,6 +10,8 @@
 # - Улучшены callback-ответы: безопасная обёртка _safe_cb_answer, чтобы не ловить таймаут
 # ============================================================
 
+from __future__ import annotations
+
 # ---------------------------
 # БАЗОВЫЕ ИМПОРТЫ
 # ---------------------------
@@ -49,6 +51,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.chat_action import ChatActionSender
 from collections import deque
 from contextlib import suppress
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+# (если где-то используешь еще ChatJoinRequest, ShippingQuery и т.п. — тоже добавь)
 # === ENV LOADING (Render-friendly) ===
 import os
 from dotenv import load_dotenv
