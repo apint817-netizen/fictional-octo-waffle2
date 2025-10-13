@@ -1233,6 +1233,30 @@ async def start_handler(message: types.Message):
             reply_markup=_menu_kb_for(message.from_user.id)
         )
 
+async def send_asset_document(
+    chat_id: int,
+    *,
+    file_id_env: str,
+    url_env: str | None = None,
+    local_path_env: str | None = None,
+    caption: str | None = None,
+):
+    file_id = os.getenv(file_id_env, "").strip()
+    url = os.getenv(url_env, "").strip() if url_env else ""
+    lpath = os.getenv(local_path_env, "").strip() if local_path_env else ""
+
+    try:
+        if file_id:
+            return await bot.send_document(chat_id, document=file_id, caption=caption)
+        if lpath and Path(lpath).exists():
+            return await bot.send_document(chat_id, document=types.FSInputFile(lpath), caption=caption)
+        if url:
+            return await bot.send_document(chat_id, document=url, caption=caption)
+        raise FileNotFoundError(f"asset not found via ENV: {file_id_env}/{url_env}/{local_path_env}")
+    except Exception as e:
+        logging.warning("Send asset failed: %s", e)
+        await bot.send_message(chat_id, "⚠️ Файл временно недоступен. Напишите в поддержку, пришлём вручную.")
+
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
     await message.answer(
@@ -1692,25 +1716,20 @@ def kb_admin_chat_controls() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="↩️ В админ-панель", callback_data="admin_home")]
     ])
 
-@dp.message(~StateFilter(AIChatStates.chatting), F.text)
-async def quick_triggers(message: types.Message, state: FSMContext):
-    txt = (message.text or "").lower()
-    paid = is_user_verified(message.from_user.id)
+# Триггер "О бренде"
+@dp.message(~StateFilter(AIChatStates.chatting), F.text.regexp(r"(?i)\b(о\s*бренде|бренд|что\s*внутри|для\s*кого)\b"))
+async def trig_brand(message: types.Message, state: FSMContext):
+    await state.set_state(AIChatStates.chatting)
+    await state.update_data(ai_is_admin=False, ai_mode="brand")
+    await message.answer("ℹ️ ИИ «О бренде» включён. Вопрос?")
 
-    if not paid:
-        if any(w in txt for w in ("о бренде", "бренд", "что внутри", "для кого")):
-            await state.set_state(AIChatStates.chatting)
-            await state.update_data(ai_is_admin=False, ai_mode="brand")
-            return await message.answer("ℹ️ ИИ «О бренде» включён. Вопрос?")
-        if any(w in txt for w in ("оплата", "как оплатить", "цена", "стоимость", "после оплаты")):
-            await state.set_state(AIChatStates.chatting)
-            await state.update_data(ai_is_admin=False, ai_mode="pay")
-            return await message.answer("💳 ИИ «Оплата» включён. Что подсказать?")
-
-    # если ничего не сработало — пропускаем апдейт дальше
-    from aiogram.exceptions import SkipHandler
-    raise SkipHandler
-
+# Триггер "Оплата"
+@dp.message(~StateFilter(AIChatStates.chatting), F.text.regexp(r"(?i)\b(оплата|как\s*оплатить|цена|стоимость|после\s*оплаты)\b"))
+async def trig_pay(message: types.Message, state: FSMContext):
+    await state.set_state(AIChatStates.chatting)
+    await state.update_data(ai_is_admin=False, ai_mode="pay")
+    await message.answer("💳 ИИ «Оплата» включён. Что подсказать?")
+    
 @dp.callback_query(F.data.regexp(r"^admin_chat_enter_(\d+)$"))
 async def admin_chat_enter_cb(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
@@ -2007,7 +2026,7 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
 
     # до оплаты показываем демо (и для консультанта, и для brand/pay)
     verified = is_user_verified(uid)  # у тебя sync; если сделаешь async — добавь await
-    is_demo_allowed = (not verified) and DEMO_AI_ENABLED and (not is_admin) and (ai_mode in ("", "brand", "pay"))
+    is_demo_allowed = (not verified) and DEMO_AI_ENABLED and (not is_admin) and (ai_mode in ("", "universal"))
 
     # демо-лимиты
     if is_demo_allowed:
@@ -3323,33 +3342,78 @@ async def send_files_to_user(user_id: int, include_presentation: bool = False):
             file_id_override=get_asset_file_id("presentation")
         )
 
-    # 4) Шаблон бота (file_id → локальный файл)
-    bot_tpl_override = get_asset_file_id("bot_template")
+        # 4) Шаблон бота (порядок: file_id → локально → URL → сгенерировать код в буфер)
     bot_tpl_sent = False
     try:
+        # 4.1 пробуем взять заранее сохранённый file_id из твоего кэша (assets/users)
+        bot_tpl_override = get_asset_file_id("bot_template")  # если ты уже кэшировал где-то file_id
         if bot_tpl_override:
             await bot.send_document(
                 user_id,
-                bot_tpl_override,
+                document=bot_tpl_override,
                 caption="🤖 <b>AI Business Bot Template</b> — готовый код для запуска",
                 parse_mode="HTML"
             )
             bot_tpl_sent = True
         else:
-            bot_template_code = create_bot_template()
+            # 4.2 пробуем из ENV: file_id
+            env_file_id = (os.getenv("BOT_TEMPLATE_FILE_ID") or "").strip()
+            if env_file_id:
+                await bot.send_document(
+                    user_id,
+                    document=env_file_id,
+                    caption="🤖 <b>AI Business Bot Template</b> — готовый код для запуска",
+                    parse_mode="HTML"
+                )
+                bot_tpl_sent = True
+            else:
+                # 4.3 пробуем локальный путь из ENV (если файл положен в образ)
+                from aiogram import types as aio_types
+                local_path = (os.getenv("BOT_TEMPLATE_LOCAL") or "bot_template.py").strip()
+                if os.path.exists(local_path):
+                    await bot.send_document(
+                        user_id,
+                        document=aio_types.FSInputFile(local_path),
+                        caption="🤖 <b>AI Business Bot Template</b> — готовый код для запуска",
+                        parse_mode="HTML"
+                    )
+                    bot_tpl_sent = True
+                else:
+                    # 4.4 пробуем URL из ENV (raw GitHub/Gist и т.п.)
+                    import urllib.request
+                    tpl_url = (os.getenv("BOT_TEMPLATE_URL") or "").strip()
+                    if tpl_url:
+                        try:
+                            with urllib.request.urlopen(tpl_url, timeout=10) as resp:
+                                code_bytes = resp.read()
+                            await bot.send_document(
+                                user_id,
+                                document=aio_types.BufferedInputFile(code_bytes, filename="ai_business_bot_template.py"),
+                                caption="🤖 <b>AI Business Bot Template</b> — готовый код для запуска",
+                                parse_mode="HTML"
+                            )
+                            bot_tpl_sent = True
+                        except Exception as e_dl:
+                            logging.warning("Download BOT_TEMPLATE_URL failed: %s", e_dl)
+
+        # 4.5 если ни один из путей не сработал — сформируем код из функции-генератора
+        if not bot_tpl_sent:
+            from aiogram import types as aio_types
+            bot_template_code = create_bot_template()  # твоя функция-генератор кода
             msg = await bot.send_document(
                 user_id,
-                document=types.BufferedInputFile(
+                document=aio_types.BufferedInputFile(
                     bot_template_code.encode("utf-8"),
                     filename="ai_business_bot_template.py"
                 ),
                 caption="🤖 <b>AI Business Bot Template</b> — готовый код для запуска",
                 parse_mode="HTML"
             )
+            # 4.6 кэшируем выданный file_id, чтобы в следующий раз не дергать сеть/генерацию
             try:
                 if msg and msg.document and msg.document.file_id:
                     users = load_paid_users()
-                    rec = users.get(str(user_id), {})
+                    rec = users.get(str(user_id), {}) if isinstance(users, dict) else {}
                     rec.setdefault("cache", {})
                     rec["cache"]["bot_template_py_file_id"] = msg.document.file_id
                     users[str(user_id)] = rec
@@ -3357,6 +3421,7 @@ async def send_files_to_user(user_id: int, include_presentation: bool = False):
             except Exception:
                 pass
             bot_tpl_sent = True
+
     except Exception as e:
         logging.warning("Send bot template failed for %s: %s", user_id, e)
 
