@@ -920,13 +920,13 @@ def set_asset_file_id(key: str, file_id: str):
 # ---------------------------
 def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="💳 Оплата по СБП (QR)", callback_data="pay_sbp")
-    kb.button(text="✅ Я оплатил(а)", callback_data="i_paid")
-    kb.button(text="🤖 ИИ: о бренде/оплате", callback_data="ai_brand")
-    kb.button(text="💬 Поддержка", callback_data="support")
-    kb.button(text="❓ FAQ", callback_data="faq")
+    kb.button(text="💳 Оплата по СБП (QR)", callback_data="pay_sbp")               # есть хэндлер pay_sbp
+    kb.button(text="✅ Я оплатил(а)", callback_data="request_verification")        # было i_paid → есть request_verification
+    kb.button(text="🤖 ИИ: о бренде/оплате", callback_data="ai_choice")            # было ai_brand → есть ai_choice
+    kb.button(text="💬 Поддержка", callback_data="support_request")                # было support → есть support_request
+    kb.button(text="❓ FAQ", callback_data="open_faq")                              # было faq → есть open_faq
     if is_admin:
-        kb.button(text="🛠 Админ", callback_data="admin_menu")
+        kb.button(text="🛠 Админ", callback_data="admin_home")                     # было admin_menu → есть admin_home
         kb.adjust(1, 1, 2, 1, 1)  # Оплата / Я оплатил(а) / (ИИ + Поддержка) / FAQ / Админ
     else:
         kb.adjust(1, 1, 2, 1)      # Оплата / Я оплатил(а) / (ИИ + Поддержка) / FAQ
@@ -934,12 +934,12 @@ def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="🔄 Получить файлы снова", callback_data="resend_kit")
-    kb.button(text="🤖 ИИ-помощник", callback_data="ai_open")  # или твой коллбэк режима
-    kb.button(text="💬 Поддержка", callback_data="support")
-    kb.button(text="❓ FAQ", callback_data="faq")
+    kb.button(text="🔄 Получить файлы снова", callback_data="get_files_again")     # было resend_kit → есть get_files_again
+    kb.button(text="🤖 ИИ-помощник", callback_data="ai_open")                       # уже есть ai_open
+    kb.button(text="💬 Поддержка", callback_data="support_request")                # было support → есть support_request
+    kb.button(text="❓ FAQ", callback_data="open_faq")                              # было faq → есть open_faq
     if is_admin:
-        kb.button(text="🛠 Админ", callback_data="admin_menu")
+        kb.button(text="🛠 Админ", callback_data="admin_home")
         kb.adjust(1, 2, 1, 1)
     else:
         kb.adjust(1, 2, 1)
@@ -1029,8 +1029,8 @@ def kb_broadcast_confirm() -> InlineKeyboardMarkup:
 def kb_verification_back() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="⬅️ В меню", callback_data="back_to_main")
-    kb.button(text="🤖 ИИ: о бренде/оплате", callback_data="ai_brand")
-    kb.button(text="💬 Поддержка", callback_data="support")
+    kb.button(text="🤖 ИИ: о бренде/оплате", callback_data="ai_choice")            # было ai_brand → ai_choice
+    kb.button(text="💬 Поддержка", callback_data="support_request")                # было support → support_request
     kb.adjust(1, 2)
     return kb.as_markup()
 
