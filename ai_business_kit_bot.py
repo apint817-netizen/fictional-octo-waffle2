@@ -26,7 +26,7 @@ import zipfile
 import functools
 import aiohttp
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from aiogram.exceptions import TelegramBadRequest
 from typing import Optional, Tuple, Dict, Any, List
 from asyncio import get_running_loop
@@ -100,6 +100,63 @@ logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s | %(levelname)s | %(mes
 
 
 # === JSON HELPERS ===
+def _parse_ts_hhmmss(s: str):
+    # ожидаем "YYYY-mm-dd HH:MM:SS"
+    try:
+        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+def summarize_recent_changes(max_items: int = 5) -> tuple[str, dict]:
+    """
+    Возвращает (текст для подписи, meta-словарь) по последним изменениям:
+    - kit_assets.json: последние обновлённые ключи (по updated_at)
+    - paid_users.json: общее количество и последние n покупателей (если есть paid_at/created_at/updated_at)
+    """
+    now = datetime.now(timezone.utc)
+    lines = []
+    meta = {"assets": [], "users": {"total": 0, "recent": []}}
+
+    # --- assets ---
+    assets = _read_json_safe(ASSETS_FILE) or {}
+    items = []
+    for k, v in (assets.items() if isinstance(assets, dict) else []):
+        if isinstance(v, dict):
+            upd = v.get("updated_at")
+            ts = _parse_ts_hhmmss(upd) if isinstance(upd, str) else None
+        else:
+            upd, ts = None, None
+        items.append((k, ts, upd))
+    items.sort(key=lambda t: (t[1] is None, t[1] or datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+    for k, ts, upd in items[:max_items]:
+        age = ""
+        if ts:
+            mins = max(0, int((now - ts).total_seconds() // 60))
+            age = f" ({mins} мин назад)" if mins < 60 else f" ({mins // 60} ч назад)"
+        lines.append(f"• asset <b>{k}</b> обновлён {upd or '—'}{age}")
+        meta["assets"].append({"key": k, "updated_at": upd})
+
+    # --- users ---
+    users = _read_json_safe(DATA_FILE)
+    if isinstance(users, dict):
+        meta["users"]["total"] = len(users)
+        recs = []
+        for uid, rec in users.items():
+            paid_at = None
+            if isinstance(rec, dict):
+                paid_at = rec.get("paid_at") or rec.get("created_at") or rec.get("updated_at")
+            ts = _parse_ts_hhmmss(paid_at) if isinstance(paid_at, str) else None
+            recs.append((uid, rec.get("username") or "unknown", ts, paid_at))
+        recs.sort(key=lambda t: (t[2] is None, t[2] or datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+        recent = recs[:max_items]
+        meta["users"]["recent"] = [{"id": uid, "username": uname, "paid_at": paid_at} for uid, uname, _, paid_at in recent]
+        if meta["users"]["total"] > 0:
+            last_str = ", ".join([f"@{r['username']}" if r["username"] != "unknown" else str(r["id"]) for r in meta["users"]["recent"]])
+            lines.append(f"• покупателей: <b>{meta['users']['total']}</b> (последние: {last_str})")
+
+    text = "Последние изменения:\n" + ("\n".join(lines) if lines else "• нет данных об изменениях")
+    return text, meta
+    
 def _read_json_safe(path: str):
     """Безопасное чтение JSON (возвращает dict или None при ошибке)."""
     try:
@@ -122,20 +179,36 @@ def _write_json_atomic(path: str, data):
         shutil.copy2(path, f"{path}.bak")
     os.replace(tmp, path)
 
-def make_backup_zip_file() -> str:
-    """Создать ZIP-бэкап как временный файл на диске и вернуть путь."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    zip_name = f"ai_business_bot_backup_{ts}.zip"
+def make_backup_zip_file() -> tuple[str, str, str]:
+    """
+    Создать ZIP-бэкап и вернуть (zip_path, human_datetime, changes_text).
+    Имя файла красивое: ai_business_kit_backup_YYYY-MM-DD_HH-MM.zip
+    Внутрь кладём _meta.json с версией и сводкой изменений.
+    """
+    now = datetime.now()
+    ts_file = now.strftime("%Y-%m-%d_%H-%M")
+    human = now.strftime("%d.%m.%Y %H:%M")
+    zip_name = f"ai_business_kit_backup_{ts_file}.zip"
+
     tmp_dir = os.path.join(DATA_DIR, "backups")
     os.makedirs(tmp_dir, exist_ok=True)
     zip_path = os.path.join(tmp_dir, zip_name)
 
+    changes_text, changes_meta = summarize_recent_changes()
+
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        meta = {"created_at": ts, "files": [], "app": "AI Business Kit", "version": "2.0"}
-        for arcname, realpath in {
+        meta = {
+            "created_at": human,
+            "files": [],
+            "app": "AI Business Kit",
+            "version": "2.1",
+            "recent_changes": changes_meta,
+        }
+        mapping = {
             "paid_users.json": DATA_FILE,
             "kit_assets.json": ASSETS_FILE,
-        }.items():
+        }
+        for arcname, realpath in mapping.items():
             try:
                 if os.path.exists(realpath):
                     zf.write(realpath, arcname)
@@ -147,7 +220,7 @@ def make_backup_zip_file() -> str:
         zf.writestr("_meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
 
     logging.info("[BACKUP] File created: %s", zip_path)
-    return zip_path
+    return zip_path, human, changes_text
     
 # ---------------------------
 # НАСТРОЙКИ ИЗ ENV
@@ -2003,26 +2076,32 @@ async def backup_handler(message: types.Message, state: FSMContext):
         return
 
     try:
-        # 1) Создаём ZIP с paid_users.json и kit_assets.json
-        zip_path = make_backup_zip_file()
+        # 1) Создаём ZIP и получаем метаданные
+        zip_path, human, changes_text = make_backup_zip_file()
         zip_name = os.path.basename(zip_path)
+        size_mb = os.path.getsize(zip_path) / (1024 * 1024)
 
-        # 2) Отправляем ZIP как документ
+        # 2) Красивый caption с датой/временем и сводкой изменений
+        caption = (
+            f"💾 <b>Бэкап создан:</b> <code>{zip_name}</code>\n"
+            f"🕒 Дата/время: <b>{human}</b>\n"
+            f"📦 Размер: <b>{size_mb:.2f} MB</b>\n\n"
+            f"{changes_text}\n\n"
+            "♻️ Для восстановления пришлите этот ZIP <i>ответом</i> на это сообщение\n"
+            "или используйте команду /restore_backup и загрузите ZIP.\n\n"
+            "Отмена восстановления: /cancel"
+        )
+
+        # 3) Отправляем ZIP
         await bot.send_document(
             chat_id=message.chat.id,
             document=FSInputFile(zip_path, filename=zip_name),
-            caption=(
-                f"💾 <b>Backup создан:</b> <code>{zip_name}</code>\n\n"
-                "♻️ Для восстановления пришлите этот ZIP <i>ответом</i> на это сообщение\n"
-                "или используйте команду /restore_backup и загрузите ZIP.\n\n"
-                "Отмена восстановления: /cancel"
-            ),
+            caption=caption,
             parse_mode="HTML",
             reply_markup=kb_admin_back()
         )
 
-        # Переводим FSM в ожидание файла (как в create_backup_cb),
-        # чтобы админ мог сразу залить файл ответом на это же сообщение
+        # 4) (опц.) сразу ждём ZIP для восстановления
         await state.set_state(AdminRestore.waiting_file)
 
     except Exception as e:
