@@ -586,6 +586,18 @@ def _demo_register_hit(uid: int):
 # ---------------------------
 # СИСТЕМНЫЕ ПРОМПТЫ ДЛЯ ИИ
 # ---------------------------
+AI_SYSTEM_PROMPT_BRAND_RAW = os.getenv("AI_SYSTEM_PROMPT_BRAND") or (
+    "Ты — ассистент бренда «{BRAND_NAME}». Отвечай кратко и по делу, по-русски. "
+    "Рассказывай только про раздел «О бренде»: миссия, ценность, для кого продукт, что внутри набора "
+    "«{PRODUCT_NAME}», чем он помогает. В конце дай 2–3 чётких следующых шага. Контакт: {BRAND_SUPPORT_TG}."
+)
+
+AI_SYSTEM_PROMPT_PAY_RAW = os.getenv("AI_SYSTEM_PROMPT_PAY") or (
+    "Ты — ассистент по оплате бренда «{BRAND_NAME}». Говори чётко, по-русски. "
+    "Покажи варианты оплаты (Boosty/СБП/карта), шаги, что делать после оплаты, куда прислать чек. "
+    "Если просят реквизиты — объясни как их получить. В конце дай 2–3 конкретных шага. Контакт: {BRAND_SUPPORT_TG}."
+)
+        
 AI_SYSTEM_PROMPT_USER_DEMO_RAW = os.getenv("AI_SYSTEM_PROMPT_USER_DEMO") or (
     "Ты — демо-ассистент набора «{BRAND_NAME}». Отвечай кратко, по делу и по-русски. "
     "Не раскрывай приватные материалы, не отправляй файлы/ключи, а в конце дай 1–2 шага, как купить набор."
@@ -1035,12 +1047,19 @@ def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
         kb.adjust(1, 2, 1)
     return kb.as_markup()
 
-def kb_ai_choice() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🤖 GPT-чат (универсальный)", callback_data="ai_open_demo")],
-        [InlineKeyboardButton(text="💼 Консультант по набору", callback_data="ai_open")],
-        [InlineKeyboardButton(text="↩️ Назад", callback_data="back_to_main")]
-    ])
+async def kb_ai_choice_for(user_id: int) -> InlineKeyboardMarkup:
+    paid = await is_user_verified(user_id)
+    rows = []
+    if not paid:
+        rows.append([InlineKeyboardButton(text="ℹ️ ИИ: О бренде", callback_data="ai_brand_open")])
+        rows.append([InlineKeyboardButton(text="💳 ИИ: Оплата", callback_data="ai_pay_open")])
+    else:
+        rows.append([InlineKeyboardButton(text="🤖 GPT-чат (универсальный)", callback_data="ai_open_demo")])
+        rows.append([InlineKeyboardButton(text="💼 Консультант по набору", callback_data="ai_open")])
+        rows.append([InlineKeyboardButton(text="ℹ️ ИИ: О бренде", callback_data="ai_brand_open")])
+        rows.append([InlineKeyboardButton(text="💳 ИИ: Оплата", callback_data="ai_pay_open")])
+    rows.append([InlineKeyboardButton(text="↩️ Назад", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
     # ✅ Универсальный выбор меню для клиента/админа
 def _menu_kb_for(user_id: int) -> InlineKeyboardMarkup:
@@ -1321,19 +1340,37 @@ async def ai_open_demo_cb(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
 
+@dp.callback_query(F.data == "ai_brand_open")
+async def ai_brand_open_cb(callback: types.CallbackQuery, state: FSMContext):
+    await _safe_cb_answer(callback)
+    await state.set_state(AIChatStates.chatting)
+    await state.update_data(ai_is_admin=False, ai_mode="brand")
+    await callback.message.answer(
+        "ℹ️ <b>ИИ: «О бренде» активен.</b>\nСпроси: «что внутри набора?», «для кого продукт?»",
+        reply_markup=kb_ai_chat(is_admin=False),
+        parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data == "ai_pay_open")
+async def ai_pay_open_cb(callback: types.CallbackQuery, state: FSMContext):
+    await _safe_cb_answer(callback)
+    await state.set_state(AIChatStates.chatting)
+    await state.update_data(ai_is_admin=False, ai_mode="pay")
+    await callback.message.answer(
+        "💳 <b>ИИ: «Оплата» активен.</b>\nСпроси: «как оплатить?», «что делать после оплаты?»",
+        reply_markup=kb_ai_chat(is_admin=False),
+        parse_mode="HTML"
+    )
+
 @dp.callback_query(F.data == "ai_choice")
 async def ai_choice_cb(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
-
-    msg = callback.message
-    txt = "Выбери режим работы ИИ 👇"
-
-    # Если исходник — текст → редактируем текст, если фото/видео с подписью → редактируем подпись
+    kb = await kb_ai_choice_for(callback.from_user.id)
     await safe_edit(
-        msg,
-        text=txt if msg.text is not None else None,
-        caption=txt if msg.caption is not None else None,
-        reply_markup=kb_ai_choice(),
+        callback.message,
+        text="Выбери режим работы ИИ 👇" if callback.message.text is not None else None,
+        caption="Выбери режим работы ИИ 👇" if callback.message.caption is not None else None,
+        reply_markup=kb,
         parse_mode="HTML",
     )
 
@@ -1645,6 +1682,21 @@ def kb_admin_chat_controls() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="↩️ В админ-панель", callback_data="admin_home")]
     ])
 
+@dp.message(F.text)
+async def quick_triggers(message: types.Message, state: FSMContext):
+    txt = (message.text or "").lower()
+    paid = await is_user_verified(message.from_user.id)
+    if not paid:
+        if any(w in txt for w in ("о бренде", "бренд", "что внутри", "для кого")):
+            await state.set_state(AIChatStates.chatting)
+            await state.update_data(ai_is_admin=False, ai_mode="brand")
+            return await message.answer("ℹ️ ИИ «О бренде» включён. Вопрос?")
+        if any(w in txt for w in ("оплата", "как оплатить", "цена", "стоимость", "после оплаты")):
+            await state.set_state(AIChatStates.chatting)
+            await state.update_data(ai_is_admin=False, ai_mode="pay")
+            return await message.answer("💳 ИИ «Оплата» включён. Что подсказать?")
+    # если не сработало — передай дальше в твой основной роутинг/AI
+
 @dp.callback_query(F.data.regexp(r"^admin_chat_enter_(\d+)$"))
 async def admin_chat_enter_cb(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
@@ -1933,16 +1985,15 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
     logging.info("[AI-HANDLER] enter uid=%s text_len=%s", message.from_user.id, len(message.text or ""))
     data = await state.get_data()
     is_admin = bool(data.get("ai_is_admin"))
-    ai_mode = (data.get("ai_mode") or "").strip()  # 'universal' | ''(consultant by default)
+    ai_mode = (data.get("ai_mode") or "").strip()  # '', 'universal', 'brand', 'pay'  ('' = консультант по умолчанию)
     uid = message.from_user.id
     user_text = (message.text or "").strip()
     if not user_text:
         return
 
-    verified = is_user_verified(uid)
-
-    # ДЕМО-режим включаем только для консультанта (универсал — без демо-приписок)
-    is_demo_allowed = (not verified) and DEMO_AI_ENABLED and (not is_admin) and (ai_mode != "universal")
+    # до оплаты показываем демо (и для консультанта, и для brand/pay)
+    verified = is_user_verified(uid)  # у тебя sync; если сделаешь async — добавь await
+    is_demo_allowed = (not verified) and DEMO_AI_ENABLED and (not is_admin) and (ai_mode in ("", "brand", "pay"))
 
     # демо-лимиты
     if is_demo_allowed:
@@ -1952,22 +2003,28 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
             await _safe_send_answer(message, "⚠️ " + reason, _menu_kb_for(message.from_user.id))
             return
 
-    # История: короче в демо (только для консультанта)
+    # История: в демо — короче
     desired_hist = max(2, min(6, AI_MAX_HISTORY)) if is_demo_allowed else None
     _push_history(uid, is_admin, "user", user_text, desired=desired_hist)
 
-    # Строим сообщения
+    # Строим сообщения для модели
     msgs = _build_messages(uid, is_admin, user_text, is_demo=is_demo_allowed)
 
-    # Если режим «универсал» — подменим system-промпт первой записи
-    if ai_mode == "universal" and msgs and msgs[0].get("role") == "system":
-        msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_UNIVERSAL_RAW, user_id=uid, is_admin=is_admin)
+    # Подмена системного промпта под режим
+    if msgs and msgs[0].get("role") == "system":
+        if ai_mode == "universal":
+            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_UNIVERSAL_RAW, user_id=uid, is_admin=is_admin)
+        elif ai_mode == "brand":
+            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_BRAND_RAW, user_id=uid, is_admin=is_admin)
+        elif ai_mode == "pay":
+            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_PAY_RAW, user_id=uid, is_admin=is_admin)
+        # else: консультант (по умолчанию остаётся твой базовый system)
 
     # «печатает…»
     with suppress(Exception):
         await bot.send_chat_action(message.chat.id, "typing")
 
-    # Унифицируем вызов: используем _ai_complete_demo и для прод-режима, передавая готовые msgs
+    # Вызов модели
     try:
         logging.info("[AI-HANDLER] call model=%s demo_allowed=%s admin=%s mode=%s",
                      OPENAI_MODEL, is_demo_allowed, is_admin, ai_mode or "consultant")
@@ -1978,13 +2035,11 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
 
     _push_history(uid, is_admin, "assistant", reply, desired=desired_hist)
 
-    # Демо-приписка только если это консультант и пользователь не верифицирован
+    # Демо-приписка — только до оплаты
     suffix = ""
     if is_demo_allowed and not verified:
-        suffix = (
-            "\n\n—\n<i>Это демо-режим (есть лимит по сообщениям). "
-            "Чтобы получить полный доступ и файлы, нажмите «Оплата по СБП (QR)».</i>"
-        )
+        cta = "Нажмите «Оплата по СБП (QR)» в меню ниже."
+        suffix = f"\n\n—\n<i>Это демо-режим (есть лимит по сообщениям). Чтобы получить полный доступ и файлы, {cta}</i>"
 
     logging.info("[AI-HANDLER] reply_len=%s", len(reply or ""))
     await _safe_send_answer(
