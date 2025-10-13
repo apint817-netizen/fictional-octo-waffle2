@@ -917,26 +917,31 @@ def set_asset_file_id(key: str, file_id: str):
 # КЛАВИАТУРЫ
 # ---------------------------
 def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=f"💳 Оплата по СБП (QR) — {SBP_PRICE_RUB} ₽", callback_data="pay_sbp")],
-        [InlineKeyboardButton(text="✅ Я оплатил(а)", callback_data="request_verification")],
-        [InlineKeyboardButton(text="❓ FAQ", callback_data="open_faq")]
-    ]
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💳 Оплата по СБП (QR)", callback_data="pay_sbp")
+    kb.button(text="✅ Я оплатил(а)", callback_data="i_paid")
+    kb.button(text="🤖 ИИ: о бренде/оплате", callback_data="ai_brand")
+    kb.button(text="💬 Поддержка", callback_data="support")
+    kb.button(text="❓ FAQ", callback_data="faq")
     if is_admin:
-        rows.insert(0, [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_home")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
+        kb.button(text="🛠 Админ", callback_data="admin_menu")
+        kb.adjust(1, 1, 2, 1, 1)  # Оплата / Я оплатил(а) / (ИИ + Поддержка) / FAQ / Админ
+    else:
+        kb.adjust(1, 1, 2, 1)      # Оплата / Я оплатил(а) / (ИИ + Поддержка) / FAQ
+    return kb.as_markup()
 
 def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="🤖 ИИ-помощник", callback_data="ai_choice")],
-        [InlineKeyboardButton(text="💬 Написать в поддержку", callback_data="support_request")],
-        [InlineKeyboardButton(text="🔄 Получить файлы снова", callback_data="get_files_again")],
-        [InlineKeyboardButton(text="❓ FAQ", callback_data="open_faq")]
-    ]
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔄 Получить файлы снова", callback_data="resend_kit")
+    kb.button(text="🤖 ИИ-помощник", callback_data="ai_open")  # или твой коллбэк режима
+    kb.button(text="💬 Поддержка", callback_data="support")
+    kb.button(text="❓ FAQ", callback_data="faq")
     if is_admin:
-        rows.insert(0, [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_home")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        kb.button(text="🛠 Админ", callback_data="admin_menu")
+        kb.adjust(1, 2, 1, 1)
+    else:
+        kb.adjust(1, 2, 1)
+    return kb.as_markup()
 
 def kb_ai_choice() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1020,9 +1025,12 @@ def kb_broadcast_confirm() -> InlineKeyboardMarkup:
     ])
 
 def kb_verification_back() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="↩️ Назад", callback_data="back_to_main")]
-    ])
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⬅️ В меню", callback_data="back_to_main")
+    kb.button(text="🤖 ИИ: о бренде/оплате", callback_data="ai_brand")
+    kb.button(text="💬 Поддержка", callback_data="support")
+    kb.adjust(1, 2)
+    return kb.as_markup()
 
 def _verified_home_text() -> str:
     return (
