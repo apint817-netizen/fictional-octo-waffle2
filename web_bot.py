@@ -37,28 +37,31 @@ START_TS = time.time()
 
 async def webhook_watchdog():
     """
-    Проверяет, что вебхук на месте. Если слетел — ставит заново.
-    Работает в фоне, пока жив сервис.
+    Проверяет каждые 2 минуты, что вебхук на месте.
+    Никаких сообщений в Telegram не шлёт — только логирует.
     """
     if not WEBHOOK_URL:
         logger.warning("[WATCHDOG] BASE_URL не задан — пропускаю проверки вебхука")
         return
+
     while True:
         try:
             info = await bot.get_webhook_info()
             current = (info.url or "").rstrip("/")
             if current != WEBHOOK_URL:
-                logger.warning("[WATCHDOG] webhook mismatch (%s != %s) — resetting", current, WEBHOOK_URL)
+                logger.warning("[WATCHDOG] ❌ webhook mismatch (%s != %s) — resetting", current, WEBHOOK_URL)
                 await bot.set_webhook(
                     url=WEBHOOK_URL,
                     secret_token=WEBHOOK_SECRET,
-                    drop_pending_updates=False,  # не теряем апдейты при авто-починке
+                    drop_pending_updates=False,
                 )
-                logger.info("[WATCHDOG] webhook reset OK")
+                logger.info("[WATCHDOG] ✅ webhook reset OK")
+            else:
+                logger.info("[WATCHDOG] ✅ webhook OK")
         except Exception as e:
-            logger.warning("[WATCHDOG] get/set_webhook failed: %s", e)
-        await asyncio.sleep(900)  # 15 минут
+            logger.warning("[WATCHDOG] ⚠️ get/set_webhook failed: %s", e)
 
+        await asyncio.sleep(120)  # 2 минуты
 
 async def heartbeat_loop():
     """
