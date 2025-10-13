@@ -288,6 +288,48 @@ def _gen_order_id() -> str:
     # короткий и удобный: дата + 4 цифры
     return datetime.now().strftime("%m%d%H%M") + "-" + f"{random.randint(0,9999):04d}"
 
+async def send_sbp_qr(chat_id: int, caption_html: str, reply_markup=None):
+    """
+    Отправляем QR СБП:
+    - Сначала пытаемся как фото (чтобы был превью в чате),
+    - Если file_id оказался документом → шлём как документ (fallback),
+    - Если ничего нет — просто текст.
+    """
+    qr_file_id = get_asset_file_id("sbp_qr") or os.getenv("SBP_QR_FILE_ID")
+    qr_url = os.getenv("SBP_QR_URL")
+
+    # 1) Попытка как фото (file_id или url-картинка)
+    try:
+        if qr_file_id:
+            await bot.send_photo(
+                chat_id, qr_file_id, caption=caption_html,
+                reply_markup=reply_markup, parse_mode="HTML"
+            )
+            return
+        if qr_url and qr_url.lower().split("?")[0].endswith((".jpg", ".jpeg", ".png", ".webp")):
+            await bot.send_photo(
+                chat_id, qr_url, caption=caption_html,
+                reply_markup=reply_markup, parse_mode="HTML"
+            )
+            return
+    except TelegramBadRequest as e:
+        # Типичный кейс: "can't use file of type Document as Photo" — падаем на документ
+        if "can't use file of type Document as Photo" not in str(e):
+            raise
+
+    # 2) Fallback: как документ (file_id или любой URL/файл)
+    if qr_file_id or qr_url:
+        await bot.send_document(
+            chat_id, qr_file_id or qr_url, caption=caption_html,
+            reply_markup=reply_markup, parse_mode="HTML"
+        )
+        return
+
+    # 3) Финальный fallback — только текст
+    await bot.send_message(
+        chat_id, caption_html, reply_markup=reply_markup, parse_mode="HTML"
+    )        
+
 async def _send_sbp_qr(chat_id: int, order_id: str):
     caption = (
         f"💳 <b>Оплата по СБП</b>\n"
@@ -422,6 +464,9 @@ print("[PROMPT_ADMIN]", AI_SYSTEM_PROMPT_ADMIN_RAW[:120].replace("\n", " "))
 # ---------------------------
 DATA_FILE   = os.path.join(DATA_DIR, "paid_users.json")
 ASSETS_FILE = os.path.join(DATA_DIR, "kit_assets.json")
+
+# === ASSETS CACHE ===
+ASSETS_CACHE: dict = {}
 
 # ---------------------------
 # БОТ/ДИСПЕТЧЕР
@@ -943,13 +988,11 @@ async def show_verified_home(chat_id: int):
 # ---------------------------
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
+    # Если не хочешь слать презентацию верифицированным — оставляй return.
+    # Если хочешь слать всем — закомментируй две строки ниже.
     if is_user_verified(message.from_user.id):
         await show_verified_home(message.chat.id)
         return
-
-    # Презентация + приветствие в одном сообщении
-    PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
-    PRESENTATION_URL = os.getenv("PDF_PRESENTATION_URL")
 
     caption = (
         "👋 <b>Добро пожаловать в AI Business Kit</b>\n\n"
@@ -972,32 +1015,28 @@ async def start_handler(message: types.Message):
         "⏱ Проверка занимает обычно 5–15 минут"
     )
 
-    try:
-        # Если есть file_id — используем его
-        if PRESENTATION_FILE_ID:
+    # Приоритет: kit_assets.json -> ENV file_id -> ENV url
+    pres_cache_id = get_asset_file_id("presentation")  # из kit_assets.json
+    pres_env_id   = os.getenv("PDF_PRESENTATION_FILE_ID")
+    pres_url      = os.getenv("PDF_PRESENTATION_URL")
+
+    # Пытаемся отправить документ с caption (единое сообщение)
+    sent = False
+    for doc in (pres_cache_id, pres_env_id, pres_url):
+        if not doc:
+            continue
+        with suppress(Exception):
             await message.answer_document(
-                document=PRESENTATION_FILE_ID,
+                document=doc,
                 caption=caption,
                 parse_mode="HTML",
                 reply_markup=_menu_kb_for(message.from_user.id)
             )
-        # Иначе fallback на URL
-        elif PRESENTATION_URL:
-            await message.answer_document(
-                document=PRESENTATION_URL,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=_menu_kb_for(message.from_user.id)
-            )
-        # Если нет файла вообще — просто текст
-        else:
-            await message.answer(
-                caption,
-                parse_mode="HTML",
-                reply_markup=_menu_kb_for(message.from_user.id)
-            )
-    except Exception as e:
-        logging.warning(f"Failed to send presentation: {e}")
+            sent = True
+            break
+
+    if not sent:
+        # Фолбэк: просто текст, если документа нет/не отправился
         await message.answer(
             caption,
             parse_mode="HTML",
