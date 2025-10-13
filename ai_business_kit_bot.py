@@ -288,17 +288,21 @@ def _gen_order_id() -> str:
     # короткий и удобный: дата + 4 цифры
     return datetime.now().strftime("%m%d%H%M") + "-" + f"{random.randint(0,9999):04d}"
 
+# обязательно:
+# from aiogram.exceptions import TelegramBadRequest
+# import os
+
 async def send_sbp_qr(chat_id: int, caption_html: str, reply_markup=None):
     """
-    Отправляем QR СБП:
-    - Сначала пытаемся как фото (чтобы был превью в чате),
-    - Если file_id оказался документом → шлём как документ (fallback),
-    - Если ничего нет — просто текст.
+    Универсальный отправитель QR:
+    1) пробуем как фото (file_id photo или URL-картинка),
+    2) если file_id оказался Document — шлём как document,
+    3) если ничего нет — отправляем текст.
     """
     qr_file_id = get_asset_file_id("sbp_qr") or os.getenv("SBP_QR_FILE_ID")
     qr_url = os.getenv("SBP_QR_URL")
 
-    # 1) Попытка как фото (file_id или url-картинка)
+    # 1) как фото
     try:
         if qr_file_id:
             await bot.send_photo(
@@ -313,11 +317,10 @@ async def send_sbp_qr(chat_id: int, caption_html: str, reply_markup=None):
             )
             return
     except TelegramBadRequest as e:
-        # Типичный кейс: "can't use file of type Document as Photo" — падаем на документ
         if "can't use file of type Document as Photo" not in str(e):
-            raise
+            raise  # не скрываем другие ошибки
 
-    # 2) Fallback: как документ (file_id или любой URL/файл)
+    # 2) как документ (и file_id-документ, и любой URL)
     if qr_file_id or qr_url:
         await bot.send_document(
             chat_id, qr_file_id or qr_url, caption=caption_html,
@@ -325,54 +328,42 @@ async def send_sbp_qr(chat_id: int, caption_html: str, reply_markup=None):
         )
         return
 
-    # 3) Финальный fallback — только текст
+    # 3) только текст
     await bot.send_message(
         chat_id, caption_html, reply_markup=reply_markup, parse_mode="HTML"
-    )        
-
-async def _send_sbp_qr(chat_id: int, order_id: str):
-    caption = (
-        f"💳 <b>Оплата по СБП</b>\n"
-        f"Сумма: <b>{SBP_PRICE_RUB} ₽</b>\n"
-        + (f"Получатель: <b>{SBP_RECIPIENT_NAME}</b>\n" if SBP_RECIPIENT_NAME else "")
-        + "\n<b>Важно!</b> В комментарии к переводу укажите:\n"
-        f"<code>{SBP_COMMENT_PREFIX} {order_id}</code>\n\n"
-        "После оплаты пришлите сюда <b>скриншот</b> операции (видны дата/время, сумма, статус, получатель)."
     )
+    
+async def send_sbp_qr_for_order(chat_id: int, order_id: str, reply_markup=None):
+    """
+    Собирает текст оплаты (с комментарием и ссылкой) и вызывает универсальный отправитель.
+    Никаких прямых send_photo тут больше нет.
+    """
+    parts = [
+        "💳 <b>Оплата по СБП</b>",
+        f"Сумма: <b>{SBP_PRICE_RUB} ₽</b>",
+    ]
+    if SBP_RECIPIENT_NAME:
+        parts.append(f"Получатель: <b>{SBP_RECIPIENT_NAME}</b>")
 
-        # 🔗 Добавляем ссылку на оплату
-    if SBP_QR_URL:
-        caption += f"\n🔗 <b>Ссылка для оплаты:</b>\n{SBP_QR_URL}\n"
+    parts += [
+        f"Номер заказа: <code>{order_id}</code>",
+        "",
+        "1️⃣ Отсканируйте QR",
+        f"2️⃣ В комментарии укажите: <code>{SBP_COMMENT_PREFIX} {order_id}</code>",
+        "3️⃣ Оплатите",
+        "4️⃣ Пришлите сюда <b>скрин чека</b>",
+        "",
+        "<b>Важно!</b> В комментарии к переводу укажите:",
+        f"<code>{SBP_COMMENT_PREFIX} {order_id}</code>",
+        "Например: <code>AIKIT @username</code>",
+    ]
 
-    # 📝 Добавляем напоминание про комментарий
-    caption += (
-        "\n<b>Важно!</b> В комментарии к переводу укажите:\n"
-        f"<code>{SBP_COMMENT_PREFIX} {order_id}</code>\n"
-        "Например: <code>AIKIT @username</code>\n\n"
-        "После оплаты отправьте скриншот чека для проверки."
-    )
+    sbp_url = os.getenv("SBP_QR_URL")
+    if sbp_url:
+        parts += ["", "🔗 <b>Ссылка для оплаты:</b>", sbp_url]
 
-    # приоритет: привязанный file_id → ENV file_id → скачиваем по URL → просто текст
-    qr_file_id_override = get_sbp_qr_file_id()
-    if qr_file_id_override:
-        await bot.send_photo(chat_id, qr_file_id_override, caption=caption, parse_mode="HTML")
-        return
-    if SBP_QR_FILE_ID:
-        try:
-            await bot.send_photo(chat_id, SBP_QR_FILE_ID, caption=caption, parse_mode="HTML")
-            return
-        except Exception:
-            pass
-    if SBP_QR_URL:
-        data = await _download_bytes_async(SBP_QR_URL)
-        if data:
-            await bot.send_photo(
-                chat_id,
-                photo=types.BufferedInputFile(data, filename="sbp_qr.png"),
-                caption=caption, parse_mode="HTML"
-            )
-            return
-    await bot.send_message(chat_id, "⚠️ QR временно недоступен. Свяжитесь с поддержкой: " + BRAND_SUPPORT_TG)
+    caption = "\n".join(parts)
+    await send_sbp_qr(chat_id, caption, reply_markup=reply_markup)
 
 import os  # если не импортирован
 
@@ -3356,69 +3347,85 @@ async def get_files_again_cb(callback: types.CallbackQuery):
 async def pay_sbp_handler(callback: types.CallbackQuery, state: FSMContext):
     await _safe_cb_answer(callback)
 
+    # 1) Регистрируем заказ и переводим в ожидание скрина
     order_id = _gen_order_id()
     uname = callback.from_user.username or "без_username"
     uid = callback.from_user.id
     save_pending_user(uid, uname)
 
-    # ждём скрин
     await state.set_state(PaymentStates.waiting_screenshot)
     await state.update_data(order_id=order_id, user_id=uid, username=uname, is_support=False)
 
-    text = (
-        f"💳 <b>Оплата по СБП</b>\n\n"
-        f"Сумма: <b>{SBP_PRICE_RUB} ₽</b>\n"
-        f"Номер заказа: <code>{order_id}</code>\n\n"
-        "1️⃣ Отсканируйте QR\n"
-        f"2️⃣ В комментарии укажите: <code>{SBP_COMMENT_PREFIX} {order_id}</code>\n"
-        "3️⃣ Оплатите\n"
-        "4️⃣ Пришлите сюда <b>скрин чека</b>\n"
-    )
+    # 2) Текст для оплаты
+    parts = [
+        "💳 <b>Оплата по СБП</b>",
+        f"Сумма: <b>{SBP_PRICE_RUB} ₽</b>",
+    ]
+    if SBP_RECIPIENT_NAME:
+        parts.append(f"Получатель: <b>{SBP_RECIPIENT_NAME}</b>")
 
-    # если есть ссылка — добавим
-    if SBP_QR_URL:
-        text += f"\n🔗 <b>Ссылка для оплаты:</b>\n{SBP_QR_URL}\n"
+    parts += [
+        f"Номер заказа: <code>{order_id}</code>",
+        "",
+        "1️⃣ Отсканируйте QR",
+        f"2️⃣ В комментарии укажите: <code>{SBP_COMMENT_PREFIX} {order_id}</code>",
+        "3️⃣ Оплатите",
+        "4️⃣ Пришлите сюда <b>скрин чека</b>",
+    ]
 
-    qr_file_id = get_sbp_qr_file_id()
-    if qr_file_id:
-        await callback.message.answer_photo(qr_file_id, caption=text, reply_markup=kb_verification_back(), parse_mode="HTML")
-    else:
-        await callback.message.answer(text + "\n⚠️ QR не привязан. Выполните /bind_sbp_qr.", reply_markup=kb_verification_back(), parse_mode="HTML")
+    # Ссылка на оплату (если есть)
+    sbp_url = os.getenv("SBP_QR_URL")
+    if sbp_url:
+        parts += ["", "🔗 <b>Ссылка для оплаты:</b>", sbp_url]
 
-@dp.message(PaymentStates.waiting_screenshot)
-async def waiting_screenshot_fallback(message: types.Message, state: FSMContext):
-    # Разрешим также document (когда скрин как файл) и короткий текст — в ответ попросим фото
-    if message.document:
-        # Пробуем принять документ как чек
-        data = await state.get_data()
-        user_id = data.get("user_id") or message.from_user.id
-        username = data.get("username") or (message.from_user.username or "без_username")
-        save_pending_user(user_id, username)
-        try:
-            await bot.send_document(
-                ADMIN_ID, message.document.file_id,
-                caption=("📸 <b>ЗАПРОС ПОДТВЕРЖДЕНИЯ</b>\n\n"
-                         f"@{username}\nID: {user_id}\n"
-                         f"{datetime.now().strftime('%H:%M %d.%m.%Y')}"),
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"approve_{user_id}"),
-                    InlineKeyboardButton(text="❌ Отклонить",  callback_data=f"reject_{user_id}")
-                ]]),
-                parse_mode="HTML"
+    # Ещё раз подсказка про комментарий (один раз, без дублирования)
+    parts += [
+        "",
+        "<b>Важно!</b> В комментарии к переводу укажите:",
+        f"<code>{SBP_COMMENT_PREFIX} {order_id}</code>",
+        "Например: <code>AIKIT @username</code>",
+    ]
+
+    text = "\n".join(parts)
+
+    # 3) Пытаемся отправить QR с умным фолбэком: photo -> document -> только текст
+    kb = kb_verification_back()
+    qr_file_id = get_asset_file_id("sbp_qr") or os.getenv("SBP_QR_FILE_ID")
+    qr_url = sbp_url  # ту же ссылку можно использовать как документ, если это не изображение
+
+    # 3.1 Как фото (если file_id - photo, или URL на картинку)
+    try:
+        if qr_file_id:
+            await callback.message.answer_photo(
+                qr_file_id, caption=text, reply_markup=kb, parse_mode="HTML"
             )
-            await message.answer(
-                "✅ Документ принят и отправлен на проверку. Сообщим о результате.",
-                reply_markup=kb_back_main(), parse_mode="HTML"
-            )
-            await state.clear()
             return
-        except Exception as e:
-            logging.warning("Forward doc for verification failed: %s", e)
+        if qr_url and qr_url.lower().split("?")[0].endswith((".jpg", ".jpeg", ".png", ".webp")):
+            await callback.message.answer_photo(
+                qr_url, caption=text, reply_markup=kb, parse_mode="HTML"
+            )
+            return
+    except TelegramBadRequest as e:
+        # типично: "can't use file of type Document as Photo" -> шлём документом
+        if "can't use file of type Document as Photo" not in str(e):
+            # если иная ошибка — пробросим дальше, чтобы не скрыть баг
+            raise
 
-    await message.answer(
-        "ℹ️ Пожалуйста, отправьте <b>фото/скриншот</b> подтверждения оплаты. "
-        "Должны быть видны дата, сумма, статус и получатель.",
-        reply_markup=kb_verification_back(), parse_mode="HTML"
+    # 3.2 Как документ (подходит для file_id документа или любого URL — даже PDF)
+    if qr_file_id or qr_url:
+        await callback.message.answer_document(
+            document=qr_file_id or qr_url,
+            caption=text,
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+        return
+
+    # 3.3 Финальный фолбэк — только текст
+    await callback.message.answer(
+        text + "\n\n⚠️ QR временно недоступен. Свяжитесь с поддержкой: " + BRAND_SUPPORT_TG,
+        reply_markup=kb,
+        parse_mode="HTML"
     )
 
 # ---------------------------
