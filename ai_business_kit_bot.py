@@ -947,31 +947,23 @@ async def start_handler(message: types.Message):
         await show_verified_home(message.chat.id)
         return
 
-    # 1) Презентация перед текстом (через универсальный хелпер)
-    with suppress(Exception):
-        await _send_document_safely(
-            chat_id=message.chat.id,
-            file_id_env=PDF_PRESENTATION_FILE_ID,   # из .env
-            url=PDF_PRESENTATION_URL,               # из .env
-            filename="AI_Business_Kit_Product_Presentation.pdf",
-            caption="📘 <b>Краткая презентация AI Business Kit</b>\n\nУзнай, как создать свой цифровой продукт с ИИ за один вечер.",
-            cache_key="presentation_file_id",
-            file_id_override=get_asset_file_id("presentation")
-        )
+    # Презентация + приветствие в одном сообщении
+    PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
+    PRESENTATION_URL = os.getenv("PDF_PRESENTATION_URL")
 
-    # 2) Основной приветственный текст
-    text = (
+    caption = (
         "👋 <b>Добро пожаловать в AI Business Kit</b>\n\n"
-        "Это готовый инструмент, чтобы запустить свой цифровой продукт с помощью ChatGPT всего за 1 вечер ⚙️\n\n"
+        "📘 <b>Краткая презентация + инструкция</b>\n"
+        "Узнай, как создать свой цифровой продукт с ИИ за один вечер 🚀\n\n"
         "💡 Набор поможет вам:\n"
         "• Автоматизировать рутину и сэкономить время\n"
-        "• Создавать контент, тексты и идеи для бизнеса\n"
+        "• Создавать контент и идеи для бизнеса\n"
         "• Запустить собственного Telegram-бота без кода\n"
-        "• Начать зарабатывать на продаже готовых AI-решений\n\n"
+        "• Начать зарабатывать на продаже AI-решений\n\n"
         "🚀 <b>Что вы получите:</b>\n"
         "• 100 ChatGPT-промптов для бизнеса\n"
         "• Шаблон Telegram-бота с CRM\n"
-        "• Пошаговое руководство по запуску (10 минут)\n\n"
+        "• Пошаговый PDF-гайд по запуску (10 минут)\n\n"
         f"💵 <b>Стоимость:</b> {SBP_PRICE_RUB} ₽\n\n"
         "Как получить:\n"
         "1️⃣ Нажмите «Оплата по СБП (QR)» и оплатите\n"
@@ -980,11 +972,37 @@ async def start_handler(message: types.Message):
         "⏱ Проверка занимает обычно 5–15 минут"
     )
 
-    await message.answer(
-        text,
-        reply_markup=_menu_kb_for(message.from_user.id),
-        parse_mode="HTML"
-    )
+    try:
+        # Если есть file_id — используем его
+        if PRESENTATION_FILE_ID:
+            await message.answer_document(
+                document=PRESENTATION_FILE_ID,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=_menu_kb_for(message.from_user.id)
+            )
+        # Иначе fallback на URL
+        elif PRESENTATION_URL:
+            await message.answer_document(
+                document=PRESENTATION_URL,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=_menu_kb_for(message.from_user.id)
+            )
+        # Если нет файла вообще — просто текст
+        else:
+            await message.answer(
+                caption,
+                parse_mode="HTML",
+                reply_markup=_menu_kb_for(message.from_user.id)
+            )
+    except Exception as e:
+        logging.warning(f"Failed to send presentation: {e}")
+        await message.answer(
+            caption,
+            parse_mode="HTML",
+            reply_markup=_menu_kb_for(message.from_user.id)
+        )
 
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
