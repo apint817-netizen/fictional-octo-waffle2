@@ -9,21 +9,24 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from aiogram.types import Update
 
-# --- ENV / CONFIG ---
-BASE_URL = (os.getenv("BASE_URL") or "").strip().rstrip("/")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "ul_kit_123secret")
-PORT = int(os.getenv("PORT", "10000"))
-HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "300"))  # каждые 5 минут
-HEARTBEAT_CHAT_ID = os.getenv("HEARTBEAT_CHAT_ID")  # опционально: куда слать пинг в TG
-
 # --- Бот / диспетчер и регистрация хэндлеров — из основного файла ---
 from ai_business_kit_bot import bot, dp, register_handlers, on_startup, on_shutdown
 
-# опционально импортнём ADMIN_ID, если есть
+# опционально импортнём ADMIN_ID, если есть (не обязательно)
 try:
     from ai_business_kit_bot import ADMIN_ID  # type: ignore
 except Exception:
     ADMIN_ID = None
+
+# --- ENV / CONFIG ---
+BASE_URL = (os.getenv("BASE_URL") or "").strip().rstrip("/")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "ul_kit_123secret")
+PORT = int(os.getenv("PORT", "10000"))
+
+# Как часто проверяем вебхук и шлём heartbeat-лог (сек)
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "30"))  # минимум 30
+# Как часто писать "OK" в лог (сек) — чтобы не спамить (по умолчанию 10 минут)
+OK_LOG_PERIOD_SEC = int(os.getenv("OK_LOG_PERIOD_SEC", "600"))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("web_bot")
@@ -32,17 +35,24 @@ WEBHOOK_PATH = f"/webhook/{WEBHOOK_SECRET}"
 WEBHOOK_URL = f"{BASE_URL}{WEBHOOK_PATH}" if BASE_URL else ""
 START_TS = time.time()
 
+app = FastAPI()  # объявим заранее; инициализация — через lifespan ниже
+
 
 # ------------------------- фоновые задачи ------------------------- #
 
 async def webhook_watchdog():
     """
-    Проверяет каждые 2 минуты, что вебхук на месте.
+    Проверяет каждые HEARTBEAT_INTERVAL_SEC секунд, что вебхук на месте.
     Никаких сообщений в Telegram не шлёт — только логирует.
+    Сообщение 'OK' печатает не чаще, чем раз в OK_LOG_PERIOD_SEC.
     """
     if not WEBHOOK_URL:
         logger.warning("[WATCHDOG] BASE_URL не задан — пропускаю проверки вебхука")
         return
+
+    interval = max(30, HEARTBEAT_INTERVAL_SEC)
+    ok_log_period = max(60, OK_LOG_PERIOD_SEC)
+    next_ok_log = 0.0
 
     while True:
         try:
@@ -53,36 +63,64 @@ async def webhook_watchdog():
                 await bot.set_webhook(
                     url=WEBHOOK_URL,
                     secret_token=WEBHOOK_SECRET,
-                    drop_pending_updates=False,
+                    drop_pending_updates=False,  # не теряем апдейты при авто-починке
+                    allowed_updates=["message", "callback_query"],
                 )
                 logger.info("[WATCHDOG] ✅ webhook reset OK")
             else:
-                logger.info("[WATCHDOG] ✅ webhook OK")
+                now = time.time()
+                if now >= next_ok_log:
+                    logger.info("[WATCHDOG] ✅ webhook OK")
+                    next_ok_log = now + ok_log_period
         except Exception as e:
             logger.warning("[WATCHDOG] ⚠️ get/set_webhook failed: %s", e)
 
-        await asyncio.sleep(120)  # 2 минуты
+        await asyncio.sleep(interval)
+
 
 async def heartbeat_loop():
     """
-    Пишет "жив" каждые HEARTBEAT_INTERVAL_SEC.
-    Если указан HEARTBEAT_CHAT_ID — отправляет заметку в Telegram (необязательно).
+    Пишет 'жив' каждые HEARTBEAT_INTERVAL_SEC в логи.
+    В Telegram никаких сообщений не отправляет.
     """
-    interval = max(60, HEARTBEAT_INTERVAL_SEC)  # защитимся от слишком частых пингов
+    interval = max(30, HEARTBEAT_INTERVAL_SEC)
+    ok_log_period = max(60, OK_LOG_PERIOD_SEC)
+    next_ok_log = 0.0
+
     while True:
         try:
             uptime_min = int((time.time() - START_TS) / 60)
-            logger.info("[HEARTBEAT] alive; uptime=%s min; webhook=%s", uptime_min, WEBHOOK_URL or "-")
-            if HEARTBEAT_CHAT_ID:
-                try:
-                    await bot.send_message(
-                        int(HEARTBEAT_CHAT_ID),
-                        f"✅ Heartbeat: alive\nUptime: {uptime_min} мин\nWebhook: {WEBHOOK_URL or '—'}"
-                    )
-                except Exception as e:
-                    logger.debug("[HEARTBEAT] send_message skipped: %s", e)
+            now = time.time()
+            if now >= next_ok_log:
+                logger.info("[HEARTBEAT] alive; uptime=%s min; webhook=%s", uptime_min, WEBHOOK_URL or "-")
+                next_ok_log = now + ok_log_period
         except Exception as e:
             logger.warning("[HEARTBEAT] failed: %s", e)
+
+        await asyncio.sleep(interval)
+
+
+async def self_ping_loop():
+    """
+    Каждые HEARTBEAT_INTERVAL_SEC секунд ходит на /healthz (локально или по BASE_URL).
+    Нужно, чтобы держать процесс 'тёплым' и ловить сетевые/маршрутизационные сбои.
+    Ничего не шлёт в Telegram, только логи при ошибках.
+    """
+    import aiohttp
+
+    interval = max(30, HEARTBEAT_INTERVAL_SEC)
+    ping_url = f"{BASE_URL}/healthz" if BASE_URL else f"http://127.0.0.1:{PORT}/healthz"
+
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(ping_url, timeout=10) as resp:
+                    if resp.status != 200:
+                        txt = await resp.text()
+                        logger.warning("[SELF-PING] HTTP %s for %s: %s", resp.status, ping_url, txt[:200])
+        except Exception as e:
+            logger.warning("[SELF-PING] failed for %s: %s", ping_url, e)
+
         await asyncio.sleep(interval)
 
 
@@ -110,6 +148,7 @@ async def lifespan(app: FastAPI):
                 url=WEBHOOK_URL,
                 secret_token=WEBHOOK_SECRET,
                 drop_pending_updates=True,
+                allowed_updates=["message", "callback_query"],
             )
             logger.info("[WEBHOOK] set to %s", WEBHOOK_URL)
 
@@ -126,8 +165,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("on_startup() failed: %s", e)
 
-    # 4) Heartbeat
+    # 4) Heartbeat + Self-ping (оба — тихие, без сообщений в TG)
     asyncio.create_task(heartbeat_loop())
+    asyncio.create_task(self_ping_loop())
 
     # Передаём управление FastAPI
     yield
@@ -144,7 +184,8 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(lifespan=lifespan)
+# Создаём приложение с lifespan
+app.router.lifespan_context = lifespan  # эквивалент FastAPI(lifespan=lifespan)
 
 
 # ------------------------- endpoints ------------------------- #
@@ -202,6 +243,7 @@ async def set_webhook(request: Request, base: str | None = None):
         url=webhook_url,
         secret_token=WEBHOOK_SECRET,
         drop_pending_updates=True,
+        allowed_updates=["message", "callback_query"],
     )
     logger.info("[WEBHOOK] set to %s -> %s", webhook_url, ok)
     return {"ok": bool(ok), "webhook": webhook_url}
@@ -245,4 +287,5 @@ async def telegram_webhook(request: Request):
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting webhook app on 0.0.0.0:%s", PORT)
+    # workers=1 и небольшой keep-alive — стабильнее на бесплатных/малых инстансах
     uvicorn.run("web_bot:app", host="0.0.0.0", port=PORT, workers=1, timeout_keep_alive=5)
