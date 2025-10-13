@@ -1695,7 +1695,7 @@ def kb_admin_chat_controls() -> InlineKeyboardMarkup:
 @dp.message(F.text)
 async def quick_triggers(message: types.Message, state: FSMContext):
     txt = (message.text or "").lower()
-    paid = await is_user_verified(message.from_user.id)
+    paid = is_user_verified(message.from_user.id)
     if not paid:
         if any(w in txt for w in ("о бренде", "бренд", "что внутри", "для кого")):
             await state.set_state(AIChatStates.chatting)
