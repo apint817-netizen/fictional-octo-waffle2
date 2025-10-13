@@ -102,27 +102,38 @@ async def heartbeat_loop():
 
 async def self_ping_loop():
     """
-    Каждые HEARTBEAT_INTERVAL_SEC секунд ходит на /healthz (локально или по BASE_URL).
-    Нужно, чтобы держать процесс 'тёплым' и ловить сетевые/маршрутизационные сбои.
-    Ничего не шлёт в Telegram, только логи при ошибках.
+    Пингуем локально /healthz каждые HEARTBEAT_INTERVAL_SEC.
+    Без сообщений в TG. В логи предупреждаем только после 3 подряд сбоев.
     """
     import aiohttp
 
     interval = max(30, HEARTBEAT_INTERVAL_SEC)
-    ping_url = f"{BASE_URL}/healthz" if BASE_URL else f"http://127.0.0.1:{PORT}/healthz"
+    ping_url = f"http://127.0.0.1:{PORT}/healthz"  # ← всегда локально
+    consecutive_failures = 0
+
+    # даём uvicornу чуть разогреться перед первым пингом
+    await asyncio.sleep(5)
 
     while True:
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(ping_url, timeout=10) as resp:
-                    if resp.status != 200:
-                        txt = await resp.text()
-                        logger.warning("[SELF-PING] HTTP %s for %s: %s", resp.status, ping_url, txt[:200])
+            timeout = aiohttp.ClientTimeout(total=5)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(ping_url, headers={"User-Agent": "self-ping"}) as resp:
+                    if resp.status == 200:
+                        consecutive_failures = 0
+                    else:
+                        consecutive_failures += 1
+                        if consecutive_failures >= 3:
+                            txt = await resp.text()
+                            logger.warning("[SELF-PING] HTTP %s for %s (x%s): %s",
+                                           resp.status, ping_url, consecutive_failures, txt[:200])
         except Exception as e:
-            logger.warning("[SELF-PING] failed for %s: %s", ping_url, e)
+            consecutive_failures += 1
+            if consecutive_failures >= 3:
+                logger.warning("[SELF-PING] failed (x%s) for %s: %s",
+                               consecutive_failures, ping_url, e)
 
         await asyncio.sleep(interval)
-
 
 # ------------------------- lifespan ------------------------- #
 
