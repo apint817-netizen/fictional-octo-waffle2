@@ -1692,10 +1692,11 @@ def kb_admin_chat_controls() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="↩️ В админ-панель", callback_data="admin_home")]
     ])
 
-@dp.message(F.text)
+@dp.message(~StateFilter(AIChatStates.chatting), F.text)
 async def quick_triggers(message: types.Message, state: FSMContext):
     txt = (message.text or "").lower()
     paid = is_user_verified(message.from_user.id)
+
     if not paid:
         if any(w in txt for w in ("о бренде", "бренд", "что внутри", "для кого")):
             await state.set_state(AIChatStates.chatting)
@@ -1705,7 +1706,10 @@ async def quick_triggers(message: types.Message, state: FSMContext):
             await state.set_state(AIChatStates.chatting)
             await state.update_data(ai_is_admin=False, ai_mode="pay")
             return await message.answer("💳 ИИ «Оплата» включён. Что подсказать?")
-    # если не сработало — передай дальше в твой основной роутинг/AI
+
+    # если ничего не сработало — пропускаем апдейт дальше
+    from aiogram.exceptions import SkipHandler
+    raise SkipHandler
 
 @dp.callback_query(F.data.regexp(r"^admin_chat_enter_(\d+)$"))
 async def admin_chat_enter_cb(callback: types.CallbackQuery, state: FSMContext):
