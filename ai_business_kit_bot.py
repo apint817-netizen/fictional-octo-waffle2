@@ -1274,15 +1274,19 @@ async def open_faq_handler(callback: types.CallbackQuery):
 # ПОДДЕРЖКА (кнопки)
 # ---------------------------
 @dp.callback_query(F.data == "support_request")
-async def support_request_handler(callback: types.CallbackQuery):
+async def support_request_handler(callback: types.CallbackQuery, state: FSMContext):
     await _safe_cb_answer(callback)
     text = (
-        "💬 <b>Служба поддержки</b>\n\n"
-        "Опишите вопрос — ответим в этом чате.\n"
-        "Если срочно — нажмите «Связаться с менеджером»."
+        "<b>Поддержка</b>\n\n"
+        "Мы поможем с оплатой, доступами и запуском бота. Напиши нам в Telegram: @upgrade_support"
     )
-    await callback.message.edit_text(text, reply_markup=kb_support(), parse_mode="HTML")
-
+    await safe_edit(
+        callback.message,
+        text=text if callback.message.text is not None else None,
+        caption=text if callback.message.caption is not None else None,
+        reply_markup=kb_support(),
+        parse_mode="HTML",
+    )
 # --------------------------
 # 📞 БЛОК ПОДДЕРЖКИ
 # --------------------------
