@@ -27,6 +27,7 @@ import functools
 import aiohttp
 import random
 from datetime import datetime
+from aiogram.exceptions import TelegramBadRequest
 from typing import Optional, Tuple, Dict, Any, List
 from asyncio import get_running_loop
 from html import escape
@@ -1870,35 +1871,65 @@ async def ai_open_cmd(message: types.Message, state: FSMContext):
 # «НАЗАД В ГЛАВНОЕ»
 # ---------------------------
 @dp.callback_query(F.data == "back_to_main")
-async def back_to_main_handler(callback: types.CallbackQuery, state: FSMContext):
+async def back_to_main(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
-    await state.clear()
 
-    uid = callback.from_user.id
-    verified = is_user_verified(uid)
-
-    sales_text = (
+    text = (
         "👋 <b>Добро пожаловать в AI Business Kit</b>\n\n"
-        "🚀 Что вы получите:\n"
+        "📘 <b>Краткая презентация + инструкция</b>\n"
+        "Узнай, как создать свой цифровой продукт с ИИ за один вечер 🚀\n\n"
+        "💡 <b>Набор поможет вам:</b>\n"
+        "• Автоматизировать рутину и сэкономить время\n"
+        "• Создавать контент и идеи для бизнеса\n"
+        "• Запустить собственного Telegram-бота без кода\n"
+        "• Начать зарабатывать на продаже AI-решений\n\n"
+        "🚀 <b>Что вы получите:</b>\n"
         "• 100 ChatGPT-промптов для бизнеса\n"
         "• Шаблон Telegram-бота с CRM\n"
-        "• Пошаговое руководство по запуску (10 минут)\n\n"
-        "💵 <b>Стоимость:</b> 3 500 ₽ (разовый платёж)\n\n"
+        "• Пошаговый PDF-гайд по запуску (10 минут)\n\n"
+        f"💵 <b>Стоимость:</b> {SBP_PRICE_RUB} ₽\n\n"
         "Как получить:\n"
-        "1) Нажмите «Оплата по СБП (QR)» и оплатите\n"
-        "2) Нажмите «Я оплатил(а)»\n"
-        "3) Отправьте скриншот чека для подтверждения\n\n"
-        "⏱ Проверка занимает обычно 5–15 минут"
+        "1️⃣ Нажмите «Оплата по СБП (QR)» и оплатите\n"
+        "2️⃣ Нажмите «✅ Я оплатил(а)»\n"
+        "3️⃣ Отправьте скриншот чека для подтверждения\n\n"
+        "⏱️ Проверка занимает обычно 5–15 минут"
     )
 
-    # ✅ умное меню
-    kb = _menu_kb_for(uid)
-    text = _verified_home_text() if verified else sales_text
+    PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
+    PRESENTATION_URL = os.getenv("PDF_PRESENTATION_URL")
 
     try:
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    except Exception:
-        await bot.send_message(callback.message.chat.id, text, reply_markup=kb, parse_mode="HTML")
+        # если есть file_id — отправляем как документ
+        if PRESENTATION_FILE_ID:
+            await callback.message.answer_document(
+                document=PRESENTATION_FILE_ID,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=_menu_kb_for(callback.from_user.id)
+            )
+        # если есть URL — отправляем по ссылке
+        elif PRESENTATION_URL:
+            await callback.message.answer_document(
+                document=PRESENTATION_URL,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=_menu_kb_for(callback.from_user.id)
+            )
+        # fallback: просто текст
+        else:
+            await callback.message.answer(
+                text,
+                parse_mode="HTML",
+                reply_markup=_menu_kb_for(callback.from_user.id)
+            )
+
+    except Exception as e:
+        logging.warning(f"[BACK_TO_MAIN] failed to send presentation: {e}")
+        await callback.message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=_menu_kb_for(callback.from_user.id)
+        )
 
 # ---------------------------
 # АДМИН: /admin + общий рендер панели
