@@ -255,31 +255,48 @@ except Exception:
 
 _heartbeat_task: asyncio.Task | None = None
 
+HEARTBEAT_SILENT = os.getenv("HEARTBEAT_SILENT", "0") == "1"
+HEARTBEAT_NOTIFY_EVERY_SEC = int(os.getenv("HEARTBEAT_NOTIFY_EVERY_SEC", "1800"))  # 30 минут
+
 async def _heartbeat_loop():
-    """Периодически шлём админу «бот активен» + время."""
-    # небольшой джиттер, чтобы при рестарте не бомбить ровно в одно и то же время
+    """Часто проверяемся, но в TG пишем редко. Между отправками — только логи."""
     async def _sleep_with_jitter(base_sec: int):
         jitter = int(base_sec * 0.1)  # ±10%
         await asyncio.sleep(max(5, base_sec + random.randint(-jitter, jitter)))
 
-    if HEARTBEAT_IMMEDIATE:
+    # Когда можно будет слать следующее TG-уведомление
+    next_notify_at = 0
+
+    # Одноразовое сообщение на старте (если включено)
+    if HEARTBEAT_IMMEDIATE and not HEARTBEAT_SILENT and HEARTBEAT_CHAT_ID:
         with suppress(Exception):
             ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")
-            await bot.send_message(
-                HEARTBEAT_CHAT_ID,
-                f"✅ Бот запущен и активен (старт: {ts})"
-            )
+            await bot.send_message(HEARTBEAT_CHAT_ID, f"✅ Бот запущен и активен (старт: {ts})")
+            next_notify_at = int(asyncio.get_event_loop().time()) + HEARTBEAT_NOTIFY_EVERY_SEC
 
     while True:
         try:
-            ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")
-            await bot.send_message(
-                HEARTBEAT_CHAT_ID,
-                f"✅ Бот активен | {ts}"
-            )
+            # Тут — «частая проверка», например, вызовы get_webhook_info() / лёгкие health-чек-действия, если хотите
+            # Сами «частые» логи не пишем, чтобы не спамить. Ошибки — логируем сразу.
+
+            now = int(asyncio.get_event_loop().time())
+
+            # Разрешаем сообщение в TG только если пришло время, не молчим и указан chat_id
+            if not HEARTBEAT_SILENT and HEARTBEAT_CHAT_ID and now >= next_notify_at:
+                with suppress(Exception):
+                    ts = datetime.now().strftime("%H:%M:%S %d.%м.%Y")
+                    await bot.send_message(HEARTBEAT_CHAT_ID, f"✅ Бот активен | {ts}")
+                next_notify_at = now + HEARTBEAT_NOTIFY_EVERY_SEC
+
+            # И всё равно один «тихий» лог раз в цикл — если нужно, оставьте/уберите по желанию
+            logging.info("[HEARTBEAT] alive; next notify in ~%s sec",
+                         max(0, next_notify_at - now) if next_notify_at else HEARTBEAT_NOTIFY_EVERY_SEC)
+
         except Exception as e:
-            logging.warning("[HEARTBEAT] send failed: %s", e)
-        await _sleep_with_jitter(HEARTBEAT_INTERVAL_SEC)    
+            logging.warning("[HEARTBEAT] send/check failed: %s", e)
+
+        # Частота внутренних проверок — как и была
+        await _sleep_with_jitter(HEARTBEAT_INTERVAL_SEC)
 
 SBP_QR_FILE_ID     = (os.getenv("SBP_QR_FILE_ID") or "").strip()
 SBP_QR_URL         = (os.getenv("SBP_QR_URL") or "").strip()
