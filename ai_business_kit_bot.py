@@ -96,6 +96,52 @@ BACKUP_FILES = {
     "kit_assets.json": ASSETS_FILE,
 }
 
+async def safe_edit(
+    message: Message,
+    *,
+    text: Optional[str] = None,
+    caption: Optional[str] = None,
+    reply_markup=None,
+    parse_mode: Optional[str] = "HTML",
+):
+    """
+    Универсально редактирует сообщение:
+    - Если у сообщения есть text и передан text -> edit_text
+    - Если у сообщения есть caption и передан caption -> edit_caption
+    - Иначе шлёт новое message.answer(...)
+    Также мягко ловит 'message is not modified' и 'there is no text in the message to edit'.
+    """
+    # Попытка редактировать текст
+    if message.text is not None and text is not None:
+        try:
+            return await message.edit_text(
+                text, reply_markup=reply_markup, parse_mode=parse_mode
+            )
+        except TelegramBadRequest as e:
+            emsg = str(e)
+            # Ничего не менялось — игнорируем
+            if "message is not modified" in emsg:
+                return
+            # Если у сообщения нет текста (хотя поле text есть), попробуем дальше
+            if "there is no text in the message to edit" not in emsg:
+                # другая причина — попробуем ниже или отправим новое
+                pass
+
+    # Попытка редактировать подпись
+    if message.caption is not None and caption is not None:
+        try:
+            return await message.edit_caption(
+                caption, reply_markup=reply_markup, parse_mode=parse_mode
+            )
+        except TelegramBadRequest as e:
+            emsg = str(e)
+            if "message is not modified" in emsg:
+                return
+
+    # Если редактировать нечего/нельзя — отправим новое
+    payload = text or caption or " "
+    return await message.answer(payload, reply_markup=reply_markup, parse_mode=parse_mode)
+
 # === LOGGING ===
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -243,11 +289,19 @@ BOOSTY_LINK  = os.getenv("BOOSTY_LINK") or ""
 ADMIN_ID     = int(os.getenv("ADMIN_ID") or 0)
 BROADCAST_VERIFIED_ONLY = (os.getenv("BROADCAST_VERIFIED_ONLY", "true").lower() == "true")
 
-HEARTBEAT_ENABLED = (os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true")
-HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "1800"))  # 30 мин по умолчанию
-HEARTBEAT_IMMEDIATE = (os.getenv("HEARTBEAT_IMMEDIATE", "false").lower() == "true")
+# === HEARTBEAT (main bot file) =========================================
+import os, asyncio, random, logging
+from datetime import datetime
+from contextlib import suppress
 
-# Куда слать “пульс”: по умолчанию — админу
+# ENV
+HEARTBEAT_ENABLED = (os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true")
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "60"))         # как часто «просыпаемся» (проверка), по умолчанию 60 сек
+HEARTBEAT_IMMEDIATE = (os.getenv("HEARTBEAT_IMMEDIATE", "false").lower() == "true")
+HEARTBEAT_SILENT = os.getenv("HEARTBEAT_SILENT", "0") == "1"                    # если 1 — в TG не пишем вообще
+HEARTBEAT_NOTIFY_EVERY_SEC = int(os.getenv("HEARTBEAT_NOTIFY_EVERY_SEC", "1800"))  # как часто писать в TG (по умолчанию 30 мин)
+
+# Куда слать «пульс»
 try:
     HEARTBEAT_CHAT_ID = int(os.getenv("HEARTBEAT_CHAT_ID") or ADMIN_ID)
 except Exception:
@@ -255,48 +309,67 @@ except Exception:
 
 _heartbeat_task: asyncio.Task | None = None
 
-HEARTBEAT_SILENT = os.getenv("HEARTBEAT_SILENT", "0") == "1"
-HEARTBEAT_NOTIFY_EVERY_SEC = int(os.getenv("HEARTBEAT_NOTIFY_EVERY_SEC", "1800"))  # 30 минут
-
 async def _heartbeat_loop():
-    """Часто проверяемся, но в TG пишем редко. Между отправками — только логи."""
+    """
+    Часто проверяемся (HEARTBEAT_INTERVAL_SEC), но в TG пишем редко (HEARTBEAT_NOTIFY_EVERY_SEC).
+    Если HEARTBEAT_SILENT=1 — в TG не пишем вовсе, только логи.
+    """
     async def _sleep_with_jitter(base_sec: int):
         jitter = int(base_sec * 0.1)  # ±10%
         await asyncio.sleep(max(5, base_sec + random.randint(-jitter, jitter)))
 
-    # Когда можно будет слать следующее TG-уведомление
-    next_notify_at = 0
+    next_notify_at = 0  # когда можно слать следующее TG-уведомление (unix time)
 
-    # Одноразовое сообщение на старте (если включено)
+    # Одноразовое сообщение на старте (если включено и не «тихо»)
     if HEARTBEAT_IMMEDIATE and not HEARTBEAT_SILENT and HEARTBEAT_CHAT_ID:
         with suppress(Exception):
-            ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")
+            ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")  # <— латинское m!
             await bot.send_message(HEARTBEAT_CHAT_ID, f"✅ Бот запущен и активен (старт: {ts})")
             next_notify_at = int(asyncio.get_event_loop().time()) + HEARTBEAT_NOTIFY_EVERY_SEC
 
     while True:
         try:
-            # Тут — «частая проверка», например, вызовы get_webhook_info() / лёгкие health-чек-действия, если хотите
-            # Сами «частые» логи не пишем, чтобы не спамить. Ошибки — логируем сразу.
-
+            # Здесь можно делать лёгкие self-checks (если нужны), без сетевых тяжелых операций
             now = int(asyncio.get_event_loop().time())
 
-            # Разрешаем сообщение в TG только если пришло время, не молчим и указан chat_id
+            # Разрешаем сообщение в TG только при наступлении окна и если не «тихо»
             if not HEARTBEAT_SILENT and HEARTBEAT_CHAT_ID and now >= next_notify_at:
                 with suppress(Exception):
-                    ts = datetime.now().strftime("%H:%M:%S %d.%м.%Y")
+                    ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")  # <— латинское m!
                     await bot.send_message(HEARTBEAT_CHAT_ID, f"✅ Бот активен | {ts}")
                 next_notify_at = now + HEARTBEAT_NOTIFY_EVERY_SEC
 
-            # И всё равно один «тихий» лог раз в цикл — если нужно, оставьте/уберите по желанию
+            # Тихий лог, чтобы видеть пульс в Render-логах без спама
             logging.info("[HEARTBEAT] alive; next notify in ~%s sec",
                          max(0, next_notify_at - now) if next_notify_at else HEARTBEAT_NOTIFY_EVERY_SEC)
 
         except Exception as e:
             logging.warning("[HEARTBEAT] send/check failed: %s", e)
 
-        # Частота внутренних проверок — как и была
         await _sleep_with_jitter(HEARTBEAT_INTERVAL_SEC)
+
+def start_heartbeat():
+    """Запускает heartbeat, если включён и ещё не запущен."""
+    global _heartbeat_task
+    if not HEARTBEAT_ENABLED:
+        logging.info("[HEARTBEAT] disabled by env")
+        return
+    if _heartbeat_task and not _heartbeat_task.done():
+        return
+    loop = asyncio.get_running_loop()
+    _heartbeat_task = loop.create_task(_heartbeat_loop())
+    logging.info("[HEARTBEAT] started")
+
+async def stop_heartbeat():
+    """Аккуратно остановить heartbeat при shutdown."""
+    global _heartbeat_task
+    if _heartbeat_task and not _heartbeat_task.done():
+        _heartbeat_task.cancel()
+        with suppress(Exception):
+            await _heartbeat_task
+    _heartbeat_task = None
+    logging.info("[HEARTBEAT] stopped")
+# ======================================================================
 
 SBP_QR_FILE_ID     = (os.getenv("SBP_QR_FILE_ID") or "").strip()
 SBP_QR_URL         = (os.getenv("SBP_QR_URL") or "").strip()
@@ -1251,10 +1324,17 @@ async def ai_open_demo_cb(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "ai_choice")
 async def ai_choice_cb(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
-    await callback.message.edit_text(
-        "Выбери режим работы ИИ 👇",
+
+    msg = callback.message
+    txt = "Выбери режим работы ИИ 👇"
+
+    # Если исходник — текст → редактируем текст, если фото/видео с подписью → редактируем подпись
+    await safe_edit(
+        msg,
+        text=txt if msg.text is not None else None,
+        caption=txt if msg.caption is not None else None,
         reply_markup=kb_ai_choice(),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
 
 @dp.callback_query(F.data == "ai_open")
@@ -3621,6 +3701,7 @@ async def unknown_command(message: types.Message):
 # ---------------------------
 async def on_startup():
     logging.info("🚀 KIT Bot стартует...")
+
     # Убедимся, что файловые БД существуют
     if not os.path.exists(DATA_FILE):
         save_users({})
@@ -3628,31 +3709,27 @@ async def on_startup():
         _save_assets({})
     logging.info("📦 База: %s | Кэш: %s", os.path.basename(DATA_FILE), os.path.basename(ASSETS_FILE))
 
-    # Запускаем heartbeat (если включён)
-    global _heartbeat_task
-    if HEARTBEAT_ENABLED and _heartbeat_task is None:
-        try:
-            _heartbeat_task = asyncio.create_task(_heartbeat_loop())
-            logging.info(
-                "[HEARTBEAT] started → interval=%ss, chat_id=%s, immediate=%s",
-                HEARTBEAT_INTERVAL_SEC, HEARTBEAT_CHAT_ID, HEARTBEAT_IMMEDIATE
-            )
-        except Exception as e:
-            logging.warning("[HEARTBEAT] start failed: %s", e)
+    # Запускаем heartbeat «правильно»
+    try:
+        start_heartbeat()  # не создаёт дубль, если уже запущен/выключен через env
+        logging.info(
+            "[HEARTBEAT] configured → enabled=%s, interval=%ss, notify_every=%ss, chat_id=%s, immediate=%s, silent=%s",
+            HEARTBEAT_ENABLED, HEARTBEAT_INTERVAL_SEC, HEARTBEAT_NOTIFY_EVERY_SEC,
+            HEARTBEAT_CHAT_ID, HEARTBEAT_IMMEDIATE, HEARTBEAT_SILENT
+        )
+    except Exception as e:
+        logging.warning("[HEARTBEAT] start failed: %s", e)
 
 
 async def on_shutdown():
     logging.info("🛑 Остановка бота...")
 
-    # Останавливаем heartbeat
-    global _heartbeat_task
-    if _heartbeat_task:
-        _heartbeat_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await _heartbeat_task
-        _heartbeat_task = None
-        logging.info("[HEARTBEAT] stopped")
-
+    # Останавливаем heartbeat корректно
+    try:
+        await stop_heartbeat()
+    except Exception as e:
+        logging.warning("[HEARTBEAT] stop failed: %s", e)
+        
 # ================= MAIN (замена) =================
 def register_handlers(dp: Dispatcher, bot: Bot):
     dp.startup.register(on_startup)
