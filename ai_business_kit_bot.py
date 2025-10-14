@@ -1109,8 +1109,8 @@ def kb_back_main() -> InlineKeyboardMarkup:
 def kb_support() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💬 Написать сообщение", callback_data="support_message")],
-        [InlineKeyboardButton(text="📞 Связаться с менеджером", callback_data="support_manager_info")],
-        [InlineKeyboardButton(text="↩️ Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton(text="👨‍💼 Контакт менеджера", callback_data="support_manager_info")],
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")]
     ])
 
 def kb_admin_panel() -> InlineKeyboardMarkup:
@@ -1356,6 +1356,27 @@ async def faq_cb(callback: types.CallbackQuery):
 # 📞 БЛОК ПОДДЕРЖКИ
 # --------------------------
 
+@dp.callback_query(F.data == "support_request")
+async def support_request_handler(callback: types.CallbackQuery, state: FSMContext):
+    await _safe_cb_answer(callback)
+    # сбросим любые FSM, вдруг юзер был в другом сценарии
+    with suppress(Exception):
+        await state.clear()
+
+    text = (
+        "<b>Поддержка</b>\n\n"
+        "Мы поможем с оплатой, доступами и запуском бота. Выберите действие:"
+    )
+
+    # показываем меню поддержки
+    await safe_edit(
+        callback.message,
+        text=text if callback.message.text is not None else None,
+        caption=text if callback.message.caption is not None else None,
+        reply_markup=kb_support(),
+        parse_mode="HTML",
+    )
+
 @dp.callback_query(F.data == "support_message")
 async def support_message_handler(callback: types.CallbackQuery, state: FSMContext):
     await _safe_cb_answer(callback)
@@ -1374,7 +1395,7 @@ async def support_message_handler(callback: types.CallbackQuery, state: FSMConte
 async def support_manager_info(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
 
-    support_tag = BRAND_SUPPORT_TG.strip()
+    support_tag = (BRAND_SUPPORT_TG or "").strip()
     if not support_tag:
         support_tag = "— не указан —"
     elif not support_tag.startswith("@"):
@@ -1391,7 +1412,13 @@ async def support_manager_info(callback: types.CallbackQuery):
         "«AI Business Kit — ... (суть вопроса)»"
     )
 
-    await callback.message.answer(text, reply_markup=kb_back_main(), parse_mode="HTML")
+    await safe_edit(
+        callback.message,
+        text=text if callback.message.text is not None else None,
+        caption=text if callback.message.caption is not None else None,
+        reply_markup=kb_back_main(),
+        parse_mode="HTML",
+    )
 
 # ---------------------------
 # ЧАТ С ИИ (пользователь/админ)
