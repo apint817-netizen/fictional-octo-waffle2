@@ -37,6 +37,10 @@ START_TS = time.time()
 
 app = FastAPI()  # объявим заранее; инициализация — через lifespan ниже
 
+# хэндлы фоновых задач, чтобы корректно гасить на shutdown
+_task_webhook_watchdog: asyncio.Task | None = None
+_task_heartbeat: asyncio.Task | None = None
+_task_self_ping: asyncio.Task | None = None
 
 # ------------------------- фоновые задачи ------------------------- #
 
