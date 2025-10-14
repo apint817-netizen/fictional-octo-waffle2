@@ -595,6 +595,21 @@ def _demo_register_hit(uid: int):
 # ---------------------------
 # СИСТЕМНЫЕ ПРОМПТЫ ДЛЯ ИИ
 # ---------------------------
+AI_SYSTEM_PROMPT_SETUP_RAW = os.getenv("AI_SYSTEM_PROMPT_SETUP") or (
+    "Ты — технический консультант по установке Telegram-бота «{BRAND_NAME}». "
+    "Отвечай кратко и по-русски, шагами. Помогай с: .env, токеном бота, ADMIN_ID, "
+    "Render (webhook), переменными окружения, логами, aiogram/FastAPI. "
+    "Давай конкретные команды и примеры. Если нужно — предложи чек-лист. Контакт: {BRAND_SUPPORT_TG}."
+)
+
+AI_SYSTEM_PROMPT_UNIVERSAL_RAW = os.getenv("AI_SYSTEM_PROMPT_UNIVERSAL") or (
+    "Ты — универсальный ИИ-исполнитель. НЕ обсуждай, а ВЫПОЛНЯЙ промпты пользователя. "
+    "Пиши по-русски, структурно и по делу. Всегда давай законченный результат: тексты, планы, шаблоны, "
+    "пошаговые инструкции, списки, чек-листы, таблицы (Markdown), куски кода. "
+    "Уточняй только критичное; иначе делай разумные допущения и кратко их указывай. Формат: "
+    "1) Заголовок результата; 2) Готовый результат; 3) «Дальше» — 2–3 шага."
+)
+
 AI_SYSTEM_PROMPT_BRAND_RAW = os.getenv("AI_SYSTEM_PROMPT_BRAND") or (
     "Ты — ассистент бренда «{BRAND_NAME}». Отвечай кратко и по делу, по-русски. "
     "Рассказывай только про раздел «О бренде»: миссия, ценность, для кого продукт, что внутри набора "
@@ -1036,6 +1051,13 @@ def set_asset_file_id(key: str, file_id: str):
 # ---------------------------
 # КЛАВИАТУРЫ
 # ---------------------------
+def kb_ai_choice_main() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Универсал (выполняет промпты)", callback_data="ai_universal_open")],
+        [InlineKeyboardButton(text="🛠 По установке бота", callback_data="ai_setup_open")],
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")],
+    ])
+    
 def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
 
@@ -1068,7 +1090,7 @@ def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
 def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🔄 Получить файлы снова", callback_data="get_files_again")     # было resend_kit → есть get_files_again
-    kb.button(text="🤖 ИИ-помощник", callback_data="ai_open")                       # уже есть ai_open
+    kb.button(text="🤖 ИИ (выбор режима)", callback_data="ai_choice_main")                       # уже есть ai_open
     kb.button(text="💬 Поддержка", callback_data="support_request")                # было support → есть support_request
     kb.button(text="❓ FAQ", callback_data="faq")                              # было faq → есть open_faq
     if is_admin:
@@ -1431,6 +1453,36 @@ async def support_manager_info(callback: types.CallbackQuery):
 # ---------------------------
 # ЧАТ С ИИ (пользователь/админ)
 # ---------------------------
+@dp.callback_query(F.data == "ai_universal_open")
+async def ai_universal_open(callback: types.CallbackQuery, state: FSMContext):
+    await _safe_cb_answer(callback)
+    await state.set_state(AIChatStates.chatting)
+    await state.update_data(ai_is_admin=(callback.from_user.id == ADMIN_ID), ai_mode="universal")
+    text = ("ℹ️ ИИ: <b>Универсал</b> активен.\n"
+            "Дай промпт — получишь готовый результат: текст, план, инструкцию, шаблон, код.")
+    await safe_edit(
+        callback.message,
+        text=text if callback.message.text is not None else None,
+        caption=text if callback.message.caption is not None else None,
+        reply_markup=kb_ai_chat(is_admin=(callback.from_user.id == ADMIN_ID)),
+        parse_mode="HTML",
+    )
+
+@dp.callback_query(F.data == "ai_setup_open")
+async def ai_setup_open(callback: types.CallbackQuery, state: FSMContext):
+    await _safe_cb_answer(callback)
+    await state.set_state(AIChatStates.chatting)
+    await state.update_data(ai_is_admin=(callback.from_user.id == ADMIN_ID), ai_mode="setup")
+    text = ("ℹ️ ИИ: <b>По установке бота</b> активен.\n"
+            "Спроси: «как запустить на Render?», «что писать в .env?», «как поставить вебхук?»")
+    await safe_edit(
+        callback.message,
+        text=text if callback.message.text is not None else None,
+        caption=text if callback.message.caption is not None else None,
+        reply_markup=kb_ai_chat(is_admin=(callback.from_user.id == ADMIN_ID)),
+        parse_mode="HTML",
+    )
+
 @dp.callback_query(F.data == "ai_open_demo")
 async def ai_open_demo_cb(callback: types.CallbackQuery, state: FSMContext):
     await _safe_cb_answer(callback)
@@ -1464,6 +1516,19 @@ async def ai_pay_open_cb(callback: types.CallbackQuery, state: FSMContext):
         "💳 <b>ИИ: «Оплата» активен.</b>\nСпроси: «как оплатить?», «что делать после оплаты?»",
         reply_markup=kb_ai_chat(is_admin=False),
         parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data == "ai_choice_main")
+async def ai_choice_main_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    # показываем выбор «универсал/установка»
+    text = "Выберите режим ИИ 👇"
+    await safe_edit(
+        callback.message,
+        text=text if callback.message.text is not None else None,
+        caption=text if callback.message.caption is not None else None,
+        reply_markup=kb_ai_choice_main(),
+        parse_mode="HTML",
     )
 
 @dp.callback_query(F.data == "ai_choice")
@@ -2088,7 +2153,7 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
     logging.info("[AI-HANDLER] enter uid=%s text_len=%s", message.from_user.id, len(message.text or ""))
     data = await state.get_data()
     is_admin = bool(data.get("ai_is_admin"))
-    ai_mode = (data.get("ai_mode") or "").strip()  # '', 'universal', 'brand', 'pay'  ('' = консультант по умолчанию)
+    ai_mode = (data.get("ai_mode") or "").strip()  # '', 'universal', 'brand', 'pay', 'setup'  ('' = консультант по умолчанию)
     uid = message.from_user.id
     user_text = (message.text or "").strip()
     if not user_text:
@@ -2115,12 +2180,14 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
 
     # Подмена системного промпта под режим
     if msgs and msgs[0].get("role") == "system":
-        if ai_mode == "universal":
+        if      ai_mode == "universal":
             msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_UNIVERSAL_RAW, user_id=uid, is_admin=is_admin)
-        elif ai_mode == "brand":
+        elif    ai_mode == "brand":
             msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_BRAND_RAW, user_id=uid, is_admin=is_admin)
-        elif ai_mode == "pay":
+        elif    ai_mode == "pay":
             msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_PAY_RAW, user_id=uid, is_admin=is_admin)
+        elif    ai_mode == "setup":  # 🆕 режим «По установке бота»
+            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_SETUP_RAW, user_id=uid, is_admin=is_admin)
         # else: консультант — остаётся базовый system
 
     # «печатает…»
@@ -2157,6 +2224,7 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
 
     if is_demo_allowed:
         _demo_register_hit(uid)
+
 
 @dp.message(Command("ai"))
 async def ai_open_cmd(message: types.Message, state: FSMContext):
