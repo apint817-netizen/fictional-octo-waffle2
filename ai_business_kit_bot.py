@@ -1038,16 +1038,19 @@ def set_asset_file_id(key: str, file_id: str):
 # ---------------------------
 def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="💳 Оплата по СБП (QR)", callback_data="pay_sbp")               # есть хэндлер pay_sbp
-    kb.button(text="✅ Я оплатил(а)", callback_data="request_verification")        # было i_paid → есть request_verification
-    kb.button(text="🤖 ИИ ассистент (демо / бренд / оплата)", callback_data="ai_choice")            # было ai_brand → есть ai_choice
-    kb.button(text="💬 Поддержка", callback_data="support_request")                # было support → есть support_request
-    kb.button(text="❓ FAQ", callback_data="open_faq")                              # было faq → есть open_faq
+    kb.button(text="💳 Оплата по СБП (QR)", callback_data="pay_sbp")
+    kb.button(text="✅ Я оплатил(а)", callback_data="request_verification")
+    # ✅ Новая отдельная кнопка демо
+    kb.button(text="🧪 Демо GPT", callback_data="ai_demo_open")
+    # ✅ Кнопка выбора режимов БЕЗ демо
+    kb.button(text="🤖 ИИ: бренд/оплата", callback_data="ai_choice")
+    kb.button(text="💬 Поддержка", callback_data="support_request")
+    kb.button(text="❓ FAQ", callback_data="open_faq")
     if is_admin:
-        kb.button(text="🛠 Админ", callback_data="admin_home")                     # было admin_menu → есть admin_home
-        kb.adjust(1, 1, 2, 1, 1)  # Оплата / Я оплатил(а) / (ИИ + Поддержка) / FAQ / Админ
+        kb.button(text="🛠 Админ", callback_data="admin_home")
+        kb.adjust(1, 1, 2, 1, 1)  # (Оплата) / (Я оплатил) / (Демо + ИИ выбор) / (Поддержка) / (FAQ + Админ)
     else:
-        kb.adjust(1, 1, 2, 1)      # Оплата / Я оплатил(а) / (ИИ + Поддержка) / FAQ
+        kb.adjust(1, 1, 2, 1, 1)  # (Оплата) / (Я оплатил) / (Демо + ИИ выбор) / (Поддержка) / (FAQ)
     return kb.as_markup()
 
 def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
@@ -1161,9 +1164,10 @@ def kb_broadcast_confirm() -> InlineKeyboardMarkup:
 def kb_verification_back() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="⬅️ В меню", callback_data="back_to_main")
-    kb.button(text="🤖 ИИ ассистент (демо / бренд / оплата)", callback_data="ai_choice")            # было ai_brand → ai_choice
-    kb.button(text="💬 Поддержка", callback_data="support_request")                # было support → support_request
-    kb.adjust(1, 2)
+    kb.button(text="🧪 Демо GPT", callback_data="ai_demo_open")              # новая отдельная
+    kb.button(text="🤖 ИИ: бренд/оплата", callback_data="ai_choice")        # переименованная
+    kb.button(text="💬 Поддержка", callback_data="support_request")
+    kb.adjust(1, 2, 1)  # (В меню) / (Демо + ИИ выбор) / (Поддержка)
     return kb.as_markup()
 
 def _verified_home_text() -> str:
