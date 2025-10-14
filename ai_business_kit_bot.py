@@ -1038,19 +1038,26 @@ def set_asset_file_id(key: str, file_id: str):
 # ---------------------------
 def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+
+    # 💳 Оплата и подтверждение
     kb.button(text="💳 Оплата по СБП (QR)", callback_data="pay_sbp")
     kb.button(text="✅ Я оплатил(а)", callback_data="request_verification")
-    # ✅ Новая отдельная кнопка демо
+
+    # 🧪 Демо и ИИ (вынесены отдельно)
     kb.button(text="🧪 Демо GPT", callback_data="ai_demo_open")
-    # ✅ Кнопка выбора режимов БЕЗ демо
     kb.button(text="🤖 ИИ: бренд/оплата", callback_data="ai_choice")
+
+    # 💬 Поддержка и ❓ FAQ
     kb.button(text="💬 Поддержка", callback_data="support_request")
-    kb.button(text="❓ FAQ", callback_data="open_faq")
+    kb.button(text="❓ FAQ", callback_data="faq")   # ← исправлено с open_faq → faq
+
+    # 🛠 Админ
     if is_admin:
         kb.button(text="🛠 Админ", callback_data="admin_home")
-        kb.adjust(1, 1, 2, 1, 1)  # (Оплата) / (Я оплатил) / (Демо + ИИ выбор) / (Поддержка) / (FAQ + Админ)
+        kb.adjust(1, 1, 2, 1, 1, 1)
     else:
-        kb.adjust(1, 1, 2, 1, 1)  # (Оплата) / (Я оплатил) / (Демо + ИИ выбор) / (Поддержка) / (FAQ)
+        kb.adjust(1, 1, 2, 1, 1)
+
     return kb.as_markup()
 
 def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
@@ -1058,7 +1065,7 @@ def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb.button(text="🔄 Получить файлы снова", callback_data="get_files_again")     # было resend_kit → есть get_files_again
     kb.button(text="🤖 ИИ-помощник", callback_data="ai_open")                       # уже есть ai_open
     kb.button(text="💬 Поддержка", callback_data="support_request")                # было support → есть support_request
-    kb.button(text="❓ FAQ", callback_data="open_faq")                              # было faq → есть open_faq
+    kb.button(text="❓ FAQ", callback_data="faq")                              # было faq → есть open_faq
     if is_admin:
         kb.button(text="🛠 Админ", callback_data="admin_home")
         kb.adjust(1, 2, 1, 1)
@@ -1307,6 +1314,9 @@ async def about_cmd(message: types.Message):
 # ---------------------------
 # FAQ
 # ---------------------------
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import os
+
 FAQ_TEXT = (
     "❓ <b>FAQ</b>\n\n"
     "1) Токен — @BotFather → /newbot\n"
@@ -1316,28 +1326,32 @@ FAQ_TEXT = (
     "5) Ответ пользователю — кнопка «✉️» в уведомлении или команда /reply\n"
 )
 
-@dp.callback_query(F.data == "open_faq")
-async def open_faq_handler(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    await callback.message.edit_text(FAQ_TEXT, reply_markup=kb_back_main(), parse_mode="HTML")
+@dp.message(Command("faq"))
+async def faq_cmd(message: types.Message):
+    sbp_url = (os.getenv("SBP_QR_URL") or "").strip()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить по СБП", url=sbp_url)] if sbp_url else [],
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")],
+    ])
+    await message.answer(FAQ_TEXT, reply_markup=kb, parse_mode="HTML")
 
-# ---------------------------
-# ПОДДЕРЖКА (кнопки)
-# ---------------------------
-@dp.callback_query(F.data == "support_request")
-async def support_request_handler(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data.in_(("faq", "open_faq")))
+async def faq_cb(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
-    text = (
-        "<b>Поддержка</b>\n\n"
-        "Мы поможем с оплатой, доступами и запуском бота. Напиши нам в Telegram: @upgrade_support"
-    )
+    sbp_url = (os.getenv("SBP_QR_URL") or "").strip()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить по СБП", url=sbp_url)] if sbp_url else [],
+        [InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")],
+    ])
+    # ВАЖНО: используем safe_edit вместо edit_text
     await safe_edit(
         callback.message,
-        text=text if callback.message.text is not None else None,
-        caption=text if callback.message.caption is not None else None,
-        reply_markup=kb_support(),
+        text=FAQ_TEXT if callback.message.text is not None else None,
+        caption=FAQ_TEXT if callback.message.caption is not None else None,
+        reply_markup=kb,
         parse_mode="HTML",
     )
+    
 # --------------------------
 # 📞 БЛОК ПОДДЕРЖКИ
 # --------------------------
