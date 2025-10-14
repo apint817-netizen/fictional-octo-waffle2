@@ -2034,8 +2034,8 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
     if not user_text:
         return
 
-    # до оплаты показываем демо (и для консультанта, и для brand/pay)
-    verified = is_user_verified(uid)  # у тебя sync; если сделаешь async — добавь await
+    # до оплаты демо только для консультанта/универсала; brand/pay — без лимитов
+    verified = is_user_verified(uid)  # sync
     is_demo_allowed = (not verified) and DEMO_AI_ENABLED and (not is_admin) and (ai_mode in ("", "universal"))
 
     # демо-лимиты
@@ -2061,7 +2061,7 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
             msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_BRAND_RAW, user_id=uid, is_admin=is_admin)
         elif ai_mode == "pay":
             msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_PAY_RAW, user_id=uid, is_admin=is_admin)
-        # else: консультант (по умолчанию остаётся твой базовый system)
+        # else: консультант — остаётся базовый system
 
     # «печатает…»
     with suppress(Exception):
@@ -2086,8 +2086,8 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
 
     logging.info("[AI-HANDLER] reply_len=%s", len(reply or ""))
 
-    # ⬇️ ВСЕГДА минимальная клава для клиента в режиме ИИ
-    reply_kb = kb_ai_chat_min() if not is_admin else kb_ai_chat(is_admin=True)
+    # ВСЕГДА минимальная клава для клиента в режиме ИИ
+    reply_kb = kb_ai_chat(is_admin=is_admin)
 
     await _safe_send_answer(
         message,
@@ -2097,37 +2097,6 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
 
     if is_demo_allowed:
         demo_register_hit(uid)
-        
-@dp.message(Command("ai_diag"))
-async def ai_diag(message: types.Message):
-    # только админу
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("❌ Нет доступа"); return
-
-    info = [
-        f"BASE_URL: {OPENAI_BASE_URL}",
-        f"MODEL: {OPENAI_MODEL}",
-        f"KEY: {'set' if bool(OPENAI_API_KEY) else 'MISSING'}",
-    ]
-    await message.answer("🔎 AI DIAG:\n" + "\n".join(info))
-
-    if not OPENAI_API_KEY:
-        await message.answer("⚠️ В .env не задан OPENAI_API_KEY"); return
-
-    try:
-        payload = {
-            "model": OPENAI_MODEL,
-            "messages": [{"role": "system", "content": "ping"}, {"role": "user", "content": "ping"}],
-            "temperature": 0.0
-        }
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(timeout=timeout, headers=_headers_for_openai()) as s:
-            async with s.post(f"{OPENAI_BASE_URL.rstrip('/')}/chat/completions", json=payload) as resp:
-                txt = await resp.text()
-                await message.answer(f"HTTP {resp.status}\n{txt[:800]}")
-    except Exception as e:
-        await message.answer(f"❌ EXC: {e}")
-
 
 @dp.message(Command("ai"))
 async def ai_open_cmd(message: types.Message, state: FSMContext):
