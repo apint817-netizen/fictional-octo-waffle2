@@ -315,64 +315,69 @@ _heartbeat_task: asyncio.Task | None = None
 
 async def _heartbeat_loop():
     """
-    Часто проверяемся (HEARTBEAT_INTERVAL_SEC), но в TG пишем редко (HEARTBEAT_NOTIFY_EVERY_SEC).
-    Если HEARTBEAT_SILENT=1 — в TG не пишем вовсе, только логи.
+    Пульс сервиса. На выключении цикл прерывается корректно (без ошибок в логах).
     """
+
     async def _sleep_with_jitter(base_sec: int):
         jitter = int(base_sec * 0.1)  # ±10%
-        await asyncio.sleep(max(5, base_sec + random.randint(-jitter, jitter)))
+        try:
+            await asyncio.sleep(max(5, int(base_sec) + random.randint(-jitter, jitter)))
+        except asyncio.CancelledError:
+            # Прерываем сон: пусть исключение всплывёт наружу и аккуратно остановит цикл
+            raise
 
-    next_notify_at = 0  # когда можно слать следующее TG-уведомление (unix time)
+    next_notify_at = 0  # когда можно слать следующее TG-уведомление (unix monotonic seconds)
 
     # Одноразовое сообщение на старте (если включено и не «тихо»)
     if HEARTBEAT_IMMEDIATE and not HEARTBEAT_SILENT and HEARTBEAT_CHAT_ID:
         with suppress(Exception):
-            ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")  # <— латинское m!
+            ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")
             await bot.send_message(HEARTBEAT_CHAT_ID, f"✅ Бот запущен и активен (старт: {ts})")
             next_notify_at = int(asyncio.get_event_loop().time()) + HEARTBEAT_NOTIFY_EVERY_SEC
 
-    while True:
-        try:
-            # Здесь можно делать лёгкие self-checks (если нужны), без сетевых тяжелых операций
-            now = int(asyncio.get_event_loop().time())
+    try:
+        while True:
+            try:
+                now = int(asyncio.get_event_loop().time())
 
-            # Разрешаем сообщение в TG только при наступлении окна и если не «тихо»
-            if not HEARTBEAT_SILENT and HEARTBEAT_CHAT_ID and now >= next_notify_at:
-                with suppress(Exception):
-                    ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")  # <— латинское m!
-                    await bot.send_message(HEARTBEAT_CHAT_ID, f"✅ Бот активен | {ts}")
-                next_notify_at = now + HEARTBEAT_NOTIFY_EVERY_SEC
+                # Периодические уведомления в TG (если не «тихо»)
+                if not HEARTBEAT_SILENT and HEARTBEAT_CHAT_ID and now >= next_notify_at:
+                    with suppress(Exception):
+                        ts = datetime.now().strftime("%H:%M:%S %d.%m.%Y")
+                        await bot.send_message(HEARTBEAT_CHAT_ID, f"✅ Бот активен | {ts}")
+                    next_notify_at = now + HEARTBEAT_NOTIFY_EVERY_SEC
 
-            # Тихий лог, чтобы видеть пульс в Render-логах без спама
-            logging.info("[HEARTBEAT] alive; next notify in ~%s sec",
-                         max(0, next_notify_at - now) if next_notify_at else HEARTBEAT_NOTIFY_EVERY_SEC)
+                # Тихий лог, чтобы видеть пульс в Render-логах без спама
+                eta = max(0, (next_notify_at - now) if next_notify_at else HEARTBEAT_NOTIFY_EVERY_SEC)
+                logging.info("[HEARTBEAT] alive; next notify in ~%s sec", eta)
 
-        except Exception as e:
-            logging.warning("[HEARTBEAT] send/check failed: %s", e)
+            except Exception as e:
+                logging.warning("[HEARTBEAT] send/check failed: %s", e)
 
-        await _sleep_with_jitter(HEARTBEAT_INTERVAL_SEC)
+            # сон с джиттером — МОЖЕТ быть прерван CancelledError при shutdown
+            await _sleep_with_jitter(HEARTBEAT_INTERVAL_SEC)
 
-def start_heartbeat():
-    """Запускает heartbeat, если включён и ещё не запущен."""
+    except asyncio.CancelledError:
+        # Нормальная остановка: выходим тихо
+        logging.info("[HEARTBEAT] cancelled; exiting loop")
+        return
+        
+async def start_heartbeat():
     global _heartbeat_task
-    if not HEARTBEAT_ENABLED:
-        logging.info("[HEARTBEAT] disabled by env")
-        return
-    if _heartbeat_task and not _heartbeat_task.done():
-        return
-    loop = asyncio.get_running_loop()
-    _heartbeat_task = loop.create_task(_heartbeat_loop())
-    logging.info("[HEARTBEAT] started")
+    if HEARTBEAT_ENABLED and _heartbeat_task is None:
+        _heartbeat_task = asyncio.create_task(_heartbeat_loop())
+        logging.info("[HEARTBEAT] started → interval=%ss, notify_every=%ss, silent=%s",
+                     HEARTBEAT_INTERVAL_SEC, HEARTBEAT_NOTIFY_EVERY_SEC, HEARTBEAT_SILENT)
 
 async def stop_heartbeat():
-    """Аккуратно остановить heartbeat при shutdown."""
+    """Аккуратно гасим heartbeat, не протаскивая CancelledError наружу."""
     global _heartbeat_task
-    if _heartbeat_task and not _heartbeat_task.done():
+    if _heartbeat_task is not None:
         _heartbeat_task.cancel()
-        with suppress(Exception):
+        with suppress(asyncio.CancelledError):
             await _heartbeat_task
-    _heartbeat_task = None
-    logging.info("[HEARTBEAT] stopped")
+        _heartbeat_task = None
+        logging.info("[HEARTBEAT] stopped")
 # ======================================================================
 
 SBP_QR_FILE_ID     = (os.getenv("SBP_QR_FILE_ID") or "").strip()
@@ -3845,16 +3850,24 @@ async def unknown_command(message: types.Message):
 async def on_startup():
     logging.info("🚀 KIT Bot стартует...")
 
-    # Убедимся, что файловые БД существуют
+    # Гарантируем наличие файловых БД
+    try:
+        base_dir = os.path.dirname(DATA_FILE) or "."
+        os.makedirs(base_dir, exist_ok=True)
+    except Exception:
+        pass
+
     if not os.path.exists(DATA_FILE):
         save_users({})
     if not os.path.exists(ASSETS_FILE):
         _save_assets({})
-    logging.info("📦 База: %s | Кэш: %s", os.path.basename(DATA_FILE), os.path.basename(ASSETS_FILE))
 
-    # Запускаем heartbeat «правильно»
+    logging.info("📦 База: %s | Кэш: %s",
+                 os.path.basename(DATA_FILE), os.path.basename(ASSETS_FILE))
+
+    # Запускаем heartbeat корректно (если включён в ENV)
     try:
-        start_heartbeat()  # не создаёт дубль, если уже запущен/выключен через env
+        await start_heartbeat()  # ВАЖНО: await
         logging.info(
             "[HEARTBEAT] configured → enabled=%s, interval=%ss, notify_every=%ss, chat_id=%s, immediate=%s, silent=%s",
             HEARTBEAT_ENABLED, HEARTBEAT_INTERVAL_SEC, HEARTBEAT_NOTIFY_EVERY_SEC,
@@ -3867,11 +3880,13 @@ async def on_startup():
 async def on_shutdown():
     logging.info("🛑 Остановка бота...")
 
-    # Останавливаем heartbeat корректно
+    # Останавливаем heartbeat мягко: отменяем таск и подавляем CancelledError
     try:
         await stop_heartbeat()
     except Exception as e:
         logging.warning("[HEARTBEAT] stop failed: %s", e)
+
+    logging.info("✅ Завершение on_shutdown завершено.")
         
 # ================= MAIN (замена) =================
 def register_handlers(dp: Dispatcher, bot: Bot):
