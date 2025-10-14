@@ -302,6 +302,10 @@ async def telegram_webhook(request: Request):
 async def ping():
     return Response(content="OK", media_type="text/plain")
 
+@app.head("/ping")
+async def ping_head():
+    return Response(content="", media_type="text/plain")
+
 
 if __name__ == "__main__":
     import uvicorn
