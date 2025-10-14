@@ -1043,23 +1043,28 @@ def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb.button(text="💳 Оплата по СБП (QR)", callback_data="pay_sbp")
     kb.button(text="✅ Я оплатил(а)", callback_data="request_verification")
 
-    # 🧪 Демо и ИИ (вынесены отдельно)
+    # 🧪 Демо и ИИ (демо вынесено отдельно)
     kb.button(text="🧪 Демо GPT", callback_data="ai_demo_open")
     kb.button(text="🤖 ИИ: бренд/оплата", callback_data="ai_choice")
 
     # 💬 Поддержка и ❓ FAQ
     kb.button(text="💬 Поддержка", callback_data="support_request")
-    kb.button(text="❓ FAQ", callback_data="faq")   # ← исправлено с open_faq → faq
+    kb.button(text="❓ FAQ", callback_data="faq")
 
-    # 🛠 Админ
+    # ↩️ В меню — ДОБАВЛЯЕМ в основное меню
+    kb.button(text="↩️ В меню", callback_data="back_to_main")
+
+    # 🛠 Админ (если админ)
     if is_admin:
         kb.button(text="🛠 Админ", callback_data="admin_home")
-        kb.adjust(1, 1, 2, 1, 1, 1)
+        # разложение по рядам: (оплата) / (я оплатил) / (демо + ИИ) / (поддержка) / (FAQ) / (в меню) / (админ)
+        kb.adjust(1, 1, 2, 1, 1, 1, 1)
     else:
-        kb.adjust(1, 1, 2, 1, 1)
+        # (оплата) / (я оплатил) / (демо + ИИ) / (поддержка) / (FAQ) / (в меню)
+        kb.adjust(1, 1, 2, 1, 1, 1)
 
     return kb.as_markup()
-
+    
 def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🔄 Получить файлы снова", callback_data="get_files_again")     # было resend_kit → есть get_files_again
@@ -3530,6 +3535,42 @@ async def send_files_to_user(user_id: int, include_presentation: bool = False):
     except Exception as e:
         logging.warning("Send README failed for %s: %s", user_id, e)
 
+        # 6) .env.example — шаблон окружения
+    try:
+        # если заранее кэшировали file_id в assets.json — можно отправить им
+        env_tpl_override = get_asset_file_id("env_template")
+        if env_tpl_override:
+            await bot.send_document(
+                user_id,
+                env_tpl_override,
+                caption="⚙️ <b>.env.example</b> — заполните и переименуйте в <code>.env</code>",
+                parse_mode="HTML"
+            )
+        else:
+            env_text = create_env_template()
+            msg = await bot.send_document(
+                user_id,
+                document=types.BufferedInputFile(
+                    env_text.encode("utf-8"),
+                    filename=".env.example"
+                ),
+                caption="⚙️ <b>.env.example</b> — заполни и переименуй в <code>.env</code>",
+                parse_mode="HTML"
+            )
+            # закэшируем file_id, чтобы в следующий раз не собирать заново
+            try:
+                if msg and msg.document and msg.document.file_id:
+                    users = load_paid_users()
+                    rec = users.get(str(user_id), {})
+                    rec.setdefault("cache", {})
+                    rec["env_template_file_id"] = msg.document.file_id
+                    users[str(user_id)] = rec
+                    save_users(users)
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning("Send .env.example failed for %s: %s", user_id, e)
+
     # 7) Уведомление админу
     try:
         users = load_paid_users()
@@ -3557,6 +3598,115 @@ def create_bot_template() -> str:
     path = os.path.join(BASE_DIR, "bot_template.py")
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
+# ============================================================
+# 🧩 ШАБЛОН ФАЙЛА .ENV (для AI Business Kit / шаблонного бота)
+# ============================================================
+
+def create_env_template() -> str:
+    """
+    Генерирует .env.example с подсказками для пользователя.
+    Этот файл бот будет высылать в комплекте.
+    """
+    return """# ===========================================
+# ⚙️ Конфигурация Telegram-бота (пример .env)
+# ===========================================
+
+# === 🧠 Основное ===
+# Получите токен у @BotFather
+BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrSTUvwxYZ
+# Ваш Telegram ID (узнать у @myidbot)
+ADMIN_ID=641521378
+# Если админов несколько — через запятую
+ADMINS=641521378,777777777
+
+# === 🏷️ Бренд / продукт ===
+# Название бренда, отображается в описании и сообщениях
+BRAND_NAME=AI Business Kit
+# Название основного продукта
+PRODUCT_NAME=AI Business Kit
+# Поддержка (укажите ваш @ник)
+BRAND_SUPPORT_TG=@upgrade_support
+# Ссылка на страницу поддержки (опционально)
+BRAND_SUPPORT_LINK=https://t.me/upgrade_support
+
+# === 💬 AI / OpenAI / OpenRouter ===
+# Ключ API (получите на openrouter.ai или platform.openai.com)
+OPENAI_API_KEY=sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Базовый URL (оставьте по умолчанию)
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+# Модель (оптимальный вариант)
+OPENAI_MODEL=openai/gpt-4o-mini
+# Количество сообщений в истории
+AI_MAX_HISTORY=6
+
+# === 💳 Оплата (СБП / Boosty) ===
+# QR-код оплаты — вставьте file_id изображения из Telegram
+SBP_QR_FILE_ID=BQACAgIAAxkBAAIDZ2Zr1234exampleQrCodeAAAABQACxAIAAl
+# URL СБП для оплаты (пример: Сбер)
+SBP_QR_URL=https://www.sberbank.com/sms/pbpn?requisiteNumber=79001234567
+# Цена в рублях
+SBP_PRICE_RUB=3500
+# Префикс комментария к платежу (опционально)
+SBP_COMMENT_PREFIX=Order#
+
+# === 📦 Материалы (Google Drive, PDF) ===
+# Ссылки на PDF-файлы или file_id, если загружали в Telegram
+PDF_PROMPTS_URL=https://drive.google.com/uc?export=download&id=XXXXXXXX
+PDF_GUIDE_URL=https://drive.google.com/uc?export=download&id=YYYYYYYY
+PDF_PRESENTATION_URL=https://drive.google.com/uc?export=download&id=ZZZZZZZZ
+
+# === 🧪 Демо-режим ===
+# Включить демо-режим: true / false
+DEMO_AI_ENABLED=true
+# Максимум сообщений в демо
+DEMO_MAX_MSG=5
+# Задержка между сообщениями (сек)
+DEMO_COOLDOWN_SEC=15
+# Время действия демо (мин)
+DEMO_EXPIRES_MIN=30
+
+# === 💓 Heartbeat (сообщения админу) ===
+# Включить heartbeat
+HEARTBEAT_ENABLED=1
+# Telegram ID, куда слать уведомления (обычно ADMIN_ID)
+HEARTBEAT_CHAT_ID=641521378
+# Интервал цикла (сек)
+HEARTBEAT_INTERVAL_SEC=60
+# Раз в сколько секунд писать "Бот активен"
+HEARTBEAT_NOTIFY_EVERY_SEC=1800
+# Отправлять сообщение сразу при старте
+HEARTBEAT_IMMEDIATE=1
+# 1 = не писать в TG, только в лог
+HEARTBEAT_SILENT=0
+
+# === 🔁 Мониторинг Render / Health ===
+# Проверка вебхука каждые N секунд
+HEALTH_MONITOR_ENABLED=1
+HEALTH_MONITOR_INTERVAL_SEC=360
+
+# === 🌐 Хостинг / вебхук ===
+# Адрес твоего приложения на Render (без / в конце)
+BASE_URL=https://your-app-name.onrender.com
+# Секрет вебхука (любой безопасный текст)
+WEBHOOK_SECRET=ul_kit_123secret
+# Порт (Render передаёт автоматически)
+PORT=10000
+
+# === 🧾 Прочее ===
+# Лимит логов OK для Render (сек)
+OK_LOG_PERIOD_SEC=600
+# Кешированные file_id для выдачи файлов
+PDF_PROMPTS_FILE_ID=
+PDF_PRESENTATION_FILE_ID=
+PDF_GUIDE_FILE_ID=
+BOT_TEMPLATE_FILE_ID=
+ENV_TEMPLATE_FILE_ID=
+
+# === ✨ Автор / проект ===
+# Разработчик: UpgradeLab
+# Проект: https://boosty.to/upgradelab
+"""
 
 def create_readme() -> str:
     """README для шаблонного бота (Template) — краткая техсправка."""
