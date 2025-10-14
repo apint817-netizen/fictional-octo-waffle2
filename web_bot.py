@@ -298,13 +298,24 @@ async def telegram_webhook(request: Request):
 
     return {"ok": True}
 
-@app.get("/ping")
-async def ping():
-    return Response(content="OK", media_type="text/plain")
+# --- ПИНГИ ДЛЯ CRON / UPTIMEROBOT --- #
+
+from fastapi.responses import PlainTextResponse
+
+@app.get("/ping", status_code=204)
+async def ping_204():
+    # пустой 204 — идеален для кронов
+    return Response(status_code=204)
+
+@app.get("/ping200", response_class=PlainTextResponse)
+async def ping_200():
+    # простой 200 OK, можно использовать для ручной проверки
+    return "OK"
 
 @app.head("/ping")
 async def ping_head():
-    return Response(content="", media_type="text/plain")
+    # HEAD-запрос без тела (идеален для cron-job.org)
+    return Response(status_code=204)
 
 
 if __name__ == "__main__":
