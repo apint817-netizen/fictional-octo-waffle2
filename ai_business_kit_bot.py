@@ -1040,7 +1040,7 @@ def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="💳 Оплата по СБП (QR)", callback_data="pay_sbp")               # есть хэндлер pay_sbp
     kb.button(text="✅ Я оплатил(а)", callback_data="request_verification")        # было i_paid → есть request_verification
-    kb.button(text="🤖 ИИ: о бренде/оплате", callback_data="ai_choice")            # было ai_brand → есть ai_choice
+    kb.button(text="🤖 ИИ ассистент (демо / бренд / оплата)", callback_data="ai_choice")            # было ai_brand → есть ai_choice
     kb.button(text="💬 Поддержка", callback_data="support_request")                # было support → есть support_request
     kb.button(text="❓ FAQ", callback_data="open_faq")                              # было faq → есть open_faq
     if is_admin:
@@ -1161,7 +1161,7 @@ def kb_broadcast_confirm() -> InlineKeyboardMarkup:
 def kb_verification_back() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="⬅️ В меню", callback_data="back_to_main")
-    kb.button(text="🤖 ИИ: о бренде/оплате", callback_data="ai_choice")            # было ai_brand → ai_choice
+    kb.button(text="🤖 ИИ ассистент (демо / бренд / оплата)", callback_data="ai_choice")            # было ai_brand → ai_choice
     kb.button(text="💬 Поддержка", callback_data="support_request")                # было support → support_request
     kb.adjust(1, 2)
     return kb.as_markup()
@@ -2664,26 +2664,68 @@ VERIFICATION_TEXT = (
     "Если у вас ещё нет QR — нажмите «Оплата по СБП (QR)» в меню.\n"
 )
 
-@dp.callback_query(F.data == "request_verification")
-async def request_verification_handler(callback: types.CallbackQuery, state: FSMContext):
+# === Оплата: из ENV ===
+SBP_QR_URL = os.getenv("SBP_QR_URL", "").strip()           # ссылка на оплату/QR
+SBP_QR_FILE_ID = os.getenv("SBP_QR_FILE_ID", "").strip()   # file_id картинки QR в Telegram
+
+# Текст при запуске проверки оплаты
+VERIFICATION_TEXT = (
+    "<b>Проверка оплаты</b>\n\n"
+    "💳 Чтобы оплатить доступ, нажмите кнопку ниже или отсканируйте QR-код.\n"
+    "После оплаты пришлите скрин/чек ответом на это сообщение — подтвердим и вышлем все файлы."
+)
+
+@dp.callback_query(F.data.in_(("i_paid", "request_verification")))
+async def i_paid_cb(callback: types.CallbackQuery, state: FSMContext):
     await _safe_cb_answer(callback)
     uid = callback.from_user.id
-    uname = callback.from_user.username or "без_username"
-    save_pending_user(uid, uname)
+    uname = (callback.from_user.username or "").strip()
 
-    data_prev = await state.get_data()
-    order_id = data_prev.get("order_id") or _gen_order_id()
-    await state.set_state(PaymentStates.waiting_screenshot)
-    await state.update_data(user_id=uid, username=uname, is_support=False, order_id=order_id)
+    # Уже подтверждён
+    if is_user_verified(uid):
+        await safe_edit(
+            callback.message,
+            text="✅ Оплата уже подтверждена. Доступ открыт.",
+            reply_markup=_menu_kb_for(uid),
+            parse_mode="HTML",
+        )
+        with suppress(Exception):
+            await send_files_to_user(uid, include_presentation=False)
+        return
 
-    await callback.message.edit_text(
-        VERIFICATION_TEXT,
-        reply_markup=kb_verification_back(),
-        parse_mode="HTML"
+    # Старт сценария: ждём скрин/чек
+    with suppress(Exception):
+        save_pending_user(uid, uname)
+    order_id = _gen_order_id() if "_gen_order_id" in globals() else None
+    with suppress(Exception):
+        await state.set_state(PaymentStates.waiting_screenshot)
+        await state.update_data(user_id=uid, username=uname, is_support=False, order_id=order_id)
+
+    # Клавиатура: ссылка на оплату + назад
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить по СБП (QR)", url=SBP_QR_URL or "https://example.com/pay")],
+        [InlineKeyboardButton(text="↩️ Назад", callback_data="back_to_main")]
+    ])
+
+    # Показываем текст (safe_edit: не упадёт на caption-only)
+    await safe_edit(
+        callback.message,
+        text=VERIFICATION_TEXT if callback.message.text is not None else None,
+        caption=VERIFICATION_TEXT if callback.message.caption is not None else None,
+        reply_markup=kb,
+        parse_mode="HTML",
     )
-    await state.set_state(PaymentStates.waiting_screenshot)
-    await state.update_data(user_id=uid, username=uname, is_support=False)
 
+    # Отправляем QR-код отдельным сообщением, если есть file_id
+    if SBP_QR_FILE_ID:
+        with suppress(Exception):
+            await bot.send_photo(
+                chat_id=uid,
+                photo=SBP_QR_FILE_ID,
+                caption="📷 Отсканируйте QR для оплаты по СБП.\nПосле оплаты — пришлите скрин/чек сюда.",
+                parse_mode="HTML"
+            )
+            
 @dp.message(PaymentStates.waiting_screenshot, F.photo)
 async def process_screenshot(message: types.Message, state: FSMContext):
     """Пользователь прислал скрин — отправляем администратору на подтверждение (с Order#)."""
