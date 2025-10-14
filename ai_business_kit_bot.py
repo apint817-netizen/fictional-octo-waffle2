@@ -1056,17 +1056,22 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 def kb_ai_choice_for(user_id: int) -> InlineKeyboardMarkup:
     paid = is_user_verified(user_id)
     rows = []
+
     if not paid:
+        # Только два режима + демо
         rows.append([InlineKeyboardButton(text="ℹ️ ИИ: О бренде", callback_data="ai_brand_open")])
         rows.append([InlineKeyboardButton(text="💳 ИИ: Оплата", callback_data="ai_pay_open")])
+        rows.append([InlineKeyboardButton(text="🧪 Демо GPT", callback_data="ai_demo_open")])
     else:
+        # После оплаты — все режимы
         rows.append([InlineKeyboardButton(text="🤖 GPT-чат (универсальный)", callback_data="ai_open_demo")])
         rows.append([InlineKeyboardButton(text="💼 Консультант по набору", callback_data="ai_open")])
         rows.append([InlineKeyboardButton(text="ℹ️ ИИ: О бренде", callback_data="ai_brand_open")])
         rows.append([InlineKeyboardButton(text="💳 ИИ: Оплата", callback_data="ai_pay_open")])
-    rows.append([InlineKeyboardButton(text="↩️ Назад", callback_data="back_to_main")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
+    rows.append([InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+    
     # ✅ Универсальный выбор меню для клиента/админа
 def _menu_kb_for(user_id: int) -> InlineKeyboardMarkup:
     is_admin = (user_id == ADMIN_ID)
@@ -2071,19 +2076,23 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
     # Демо-приписка — только до оплаты
     suffix = ""
     if is_demo_allowed and not verified:
-        cta = "Нажмите «Оплата по СБП (QR)» в меню ниже."
+        cta = "Нажмите «В меню» ниже → «Оплата по СБП (QR)»."
         suffix = f"\n\n—\n<i>Это демо-режим (есть лимит по сообщениям). Чтобы получить полный доступ и файлы, {cta}</i>"
 
     logging.info("[AI-HANDLER] reply_len=%s", len(reply or ""))
+
+    # ⬇️ ВСЕГДА минимальная клава для клиента в режиме ИИ
+    reply_kb = kb_ai_chat_min() if not is_admin else kb_ai_chat(is_admin=True)
+
     await _safe_send_answer(
         message,
         (reply or "⚠️ Пустой ответ.") + suffix,
-        kb_ai_chat(is_admin=is_admin) if verified else _menu_kb_for(message.from_user.id)
+        reply_kb
     )
 
     if is_demo_allowed:
-        _demo_register_hit(uid)
-
+        demo_register_hit(uid)
+        
 @dp.message(Command("ai_diag"))
 async def ai_diag(message: types.Message):
     # только админу
