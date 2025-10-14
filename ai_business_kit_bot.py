@@ -2103,7 +2103,7 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
     )
 
     if is_demo_allowed:
-        demo_register_hit(uid)
+        _demo_register_hit(uid)
 
 @dp.message(Command("ai"))
 async def ai_open_cmd(message: types.Message, state: FSMContext):
