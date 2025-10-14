@@ -1073,16 +1073,16 @@ def kb_ai_choice_for(user_id: int) -> InlineKeyboardMarkup:
     rows = []
 
     if not paid:
-        # Только два режима + демо
+        # До оплаты — только два режима без демо
         rows.append([InlineKeyboardButton(text="ℹ️ ИИ: О бренде", callback_data="ai_brand_open")])
-        rows.append([InlineKeyboardButton(text="💳 ИИ: Оплата", callback_data="ai_pay_open")])
-        rows.append([InlineKeyboardButton(text="🧪 Демо GPT", callback_data="ai_demo_open")])
+        rows.append([InlineKeyboardButton(text="💳 ИИ: Оплата",    callback_data="ai_pay_open")])
     else:
-        # После оплаты — все режимы
-        rows.append([InlineKeyboardButton(text="🤖 GPT-чат (универсальный)", callback_data="ai_open_demo")])
+        # После оплаты — универсал + консультант + бренд/оплата
+        # (коллбэк ai_open_demo оставляем ради переиспользования хендлера, это НЕ демо)
+        rows.append([InlineKeyboardButton(text="🤖 Универсальный GPT",   callback_data="ai_open_demo")])
         rows.append([InlineKeyboardButton(text="💼 Консультант по набору", callback_data="ai_open")])
-        rows.append([InlineKeyboardButton(text="ℹ️ ИИ: О бренде", callback_data="ai_brand_open")])
-        rows.append([InlineKeyboardButton(text="💳 ИИ: Оплата", callback_data="ai_pay_open")])
+        rows.append([InlineKeyboardButton(text="ℹ️ ИИ: О бренде",        callback_data="ai_brand_open")])
+        rows.append([InlineKeyboardButton(text="💳 ИИ: Оплата",          callback_data="ai_pay_open")])
 
     rows.append([InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -2602,25 +2602,32 @@ async def create_backup_cb(callback: types.CallbackQuery, state: FSMContext):
     await _safe_cb_answer(callback)
 
     try:
-        # 1) Создаём ZIP на диске
-        zip_path = make_backup_zip_file()
+        # 1) Создаём ZIP и получаем метаданные
+        zip_path, human, changes_text = make_backup_zip_file()
         zip_name = os.path.basename(zip_path)
+        size_mb = os.path.getsize(zip_path) / (1024 * 1024)
 
-        # 2) Отправляем файл с диска (без загрузки в память)
+        # 2) Красивый caption
+        caption = (
+            f"💾 <b>Бэкап создан:</b> <code>{zip_name}</code>\n"
+            f"🕒 Дата/время: <b>{human}</b>\n"
+            f"📦 Размер: <b>{size_mb:.2f} MB</b>\n\n"
+            f"{changes_text}\n\n"
+            "♻️ Чтобы <b>восстановить</b>, пришлите этот ZIP <i>ответом</i> на это сообщение\n"
+            "или используйте команду /restore_backup.\n\n"
+            "Отмена восстановления: /cancel"
+        )
+
+        # 3) Отправляем ZIP
         await bot.send_document(
             chat_id=callback.from_user.id,
             document=FSInputFile(zip_path, filename=zip_name),
-            caption=(
-                f"💾 <b>Backup создан:</b> <code>{zip_name}</code>\n\n"
-                "♻️ Чтобы <b>восстановить</b>, пришлите ZIP/JSON <i>ответом</i> на это сообщение "
-                "или используйте команду /restore_backup.\n\n"
-                "Отмена: /cancel"
-            ),
+            caption=caption,
             parse_mode="HTML",
             reply_markup=kb_admin_back()
         )
 
-        # 3) Переводим FSM в ожидание файла для восстановления
+        # 4) Переводим FSM в ожидание файла для восстановления
         await state.set_state(AdminRestore.waiting_file)
         logging.info("[BACKUP] Sent %s to admin %s", zip_name, callback.from_user.id)
 
