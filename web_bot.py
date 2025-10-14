@@ -298,6 +298,10 @@ async def telegram_webhook(request: Request):
 
     return {"ok": True}
 
+@app.get("/ping")
+async def ping():
+    return Response(content="OK", media_type="text/plain")
+
 
 if __name__ == "__main__":
     import uvicorn
