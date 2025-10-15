@@ -1181,9 +1181,10 @@ def kb_verification_back() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 def _verified_home_text() -> str:
-    return "🎉 <b>Доступ активирован</b>
-Материалы готовы к выдаче. Что дальше?"
-
+    return (
+        "🎉 <b>Доступ активирован</b>\n"
+        "Материалы готовы к выдаче. Что дальше?"
+    )
 
 async def show_verified_home(chat_id: int):
     await bot.send_message(
