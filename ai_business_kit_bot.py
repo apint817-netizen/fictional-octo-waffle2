@@ -1065,6 +1065,19 @@ def kb_main_min(user_id: int) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin_home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+# === После оплаты: короткое меню (3 CTA) ===
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton  # (оставь, если уже импортировано выше)
+
+def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="📦 Получить файлы", callback_data="get_files_again")],
+        [InlineKeyboardButton(text="🤖 ИИ-помощник",    callback_data="ai_chat_open")],
+        [InlineKeyboardButton(text="💬 Поддержка",      callback_data="support_request")],
+    ]
+    if is_admin:
+        rows.append([InlineKeyboardButton(text="🛠 Админ", callback_data="admin_home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 @dp.callback_query(F.data == "kit_inside")
 async def kit_inside_cb(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
@@ -2100,6 +2113,43 @@ async def admin_handler(message: types.Message):
         return
     await message.answer(_render_admin_home_text(), reply_markup=kb_admin_panel(), parse_mode="HTML")
 
+# =========================
+# ADMIN: Главная панель
+# =========================
+from typing import Optional
+
+def kb_admin_home() -> InlineKeyboardMarkup:
+    # Три группы + Домой (минимум шума)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 Покупатели", callback_data="admin_buyers")],
+        [InlineKeyboardButton(text="💬 Сообщения",  callback_data="admin_messages")],
+        [InlineKeyboardButton(text="🧰 Сервис",     callback_data="admin_service")],
+        [InlineKeyboardButton(text="↩️ Домой",     callback_data="back_home_min")],
+    ])
+
+async def _go_admin_home(chat_id: int, as_edit: Optional[types.Message] = None):
+    text = (
+        "🛠 <b>Админ-панель</b>\n"
+        "Выберите раздел:"
+    )
+    if as_edit:
+        # Редактируем текущее сообщение (если вызвано из callback)
+        await safe_edit(
+            as_edit,
+            text=text if as_edit.text is not None else None,
+            caption=text if as_edit.caption is not None else None,
+            reply_markup=kb_admin_home(),
+            parse_mode="HTML",
+        )
+    else:
+        # Отправляем новое
+        await bot.send_message(
+            chat_id,
+            text,
+            parse_mode="HTML",
+            reply_markup=kb_admin_home()
+        )
+
 @dp.callback_query(F.data == "admin_home")
 async def admin_home_cb(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -2334,6 +2384,32 @@ async def admin_export_buyers_cb(callback: types.CallbackQuery):
         callback.message.chat.id,
         document=types.BufferedInputFile(data, filename=f"buyers_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"),
         caption="📦 Экспорт покупателей (CSV)"
+    )
+
+@dp.callback_query(F.data == "admin_messages")
+async def admin_messages_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    await safe_edit(
+        callback.message,
+        text="💬 Раздел «Сообщения». (Диалоги/форвард/ответы.)",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Админ-панель", callback_data="admin_home")],
+            [InlineKeyboardButton(text="↩️ Домой", callback_data="back_home_min")],
+        ]),
+        parse_mode="HTML",
+    )
+
+@dp.callback_query(F.data == "admin_service")
+async def admin_service_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    await safe_edit(
+        callback.message,
+        text="🧰 Раздел «Сервис». (Бэкап, статистика, тех. действия.)",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="↩️ Админ-панель", callback_data="admin_home")],
+            [InlineKeyboardButton(text="↩️ Домой", callback_data="back_home_min")],
+        ]),
+        parse_mode="HTML",
     )
 
 @dp.callback_query(F.data == "admin_reply_prompt")
