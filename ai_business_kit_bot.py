@@ -2119,7 +2119,6 @@ async def admin_handler(message: types.Message):
 from typing import Optional
 
 def kb_admin_home() -> InlineKeyboardMarkup:
-    # Три группы + Домой (минимум шума)
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👥 Покупатели", callback_data="admin_buyers")],
         [InlineKeyboardButton(text="💬 Сообщения",  callback_data="admin_messages")],
@@ -2128,12 +2127,8 @@ def kb_admin_home() -> InlineKeyboardMarkup:
     ])
 
 async def _go_admin_home(chat_id: int, as_edit: Optional[types.Message] = None):
-    text = (
-        "🛠 <b>Админ-панель</b>\n"
-        "Выберите раздел:"
-    )
+    text = "🛠 <b>Админ-панель</b>\nВыберите раздел:"
     if as_edit:
-        # Редактируем текущее сообщение (если вызвано из callback)
         await safe_edit(
             as_edit,
             text=text if as_edit.text is not None else None,
@@ -2142,13 +2137,95 @@ async def _go_admin_home(chat_id: int, as_edit: Optional[types.Message] = None):
             parse_mode="HTML",
         )
     else:
-        # Отправляем новое
-        await bot.send_message(
-            chat_id,
-            text,
-            parse_mode="HTML",
-            reply_markup=kb_admin_home()
-        )
+        await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=kb_admin_home())
+
+# Совместимость со старым кодом:
+def _render_admin_home_text() -> str:
+    return "🛠 <b>Админ-панель</b>\nВыберите раздел:"
+
+def kb_admin_panel() -> InlineKeyboardMarkup:
+    return kb_admin_home()
+
+@dp.callback_query(F.data == "admin_home")
+async def admin_home_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    await _go_admin_home(callback.message.chat.id, as_edit=callback.message)
+
+# --- Покупатели ---
+def kb_admin_buyers() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📄 Список покупателей", callback_data="admin_buyers_list")],
+        [InlineKeyboardButton(text="📤 Экспорт CSV",        callback_data="admin_buyers_export")],
+        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data="admin_buyers_verify")],
+        [InlineKeyboardButton(text="↩️ Админ-панель",       callback_data="admin_home")],
+    ])
+
+# --- Сообщения/диалоги ---
+def kb_admin_messages() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 Диалоги / входящие", callback_data="admin_msgs_inbox")],
+        [InlineKeyboardButton(text="✉️ Связаться с пользователем", callback_data="admin_msg_contact")],
+        [InlineKeyboardButton(text="📣 Рассылка (только verified)",  callback_data="admin_broadcast_verified")],
+        [InlineKeyboardButton(text="↩️ Админ-панель",               callback_data="admin_home")],
+    ])
+
+# --- Сервис/бэкап ---
+def kb_admin_service() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💾 Бэкап (БД/файлы)", callback_data="admin_backup")],
+        [InlineKeyboardButton(text="♻️ Восстановление",   callback_data="admin_restore")],
+        [InlineKeyboardButton(text="📊 Статистика",       callback_data="admin_stats")],
+        [InlineKeyboardButton(text="↩️ Админ-панель",     callback_data="admin_home")],
+    ])
+
+# =========================
+# ADMIN: совместимость со старыми именами
+# =========================
+def _render_admin_home_text() -> str:
+    # Раньше в админке был длинный текст; теперь компактная шапка:
+    return (
+        "🛠 <b>Админ-панель</b>\n"
+        "Выберите раздел:"
+    )
+
+def kb_admin_panel() -> InlineKeyboardMarkup:
+    # Старое имя клавиатуры → проксируем к новой kb_admin_home()
+    return kb_admin_home()
+
+# =========================
+# ADMIN: helpers for legacy admin actions
+# =========================
+from types import FunctionType
+
+def _try_call_any(aliases, *args, **kwargs):
+    """
+    Пытается найти в глобалах любую из функций-алиасов и вызвать её.
+    Возвращает True, если удалось вызвать; иначе False.
+    """
+    for name in aliases:
+        fn = globals().get(name)
+        if isinstance(fn, FunctionType):
+            return fn(*args, **kwargs)  # может быть sync/async — обернём выше при вызове
+    return False
+
+async def _try_acall_any(aliases, *args, **kwargs):
+    """
+    Асинхронная версия: если найдена sync-функция — вызовем через обычный вызов,
+    если async — через await. Возвращает True, если вызвали что-то.
+    """
+    for name in aliases:
+        fn = globals().get(name)
+        if callable(fn):
+            try:
+                if hasattr(fn, "__await__") or "async def" in str(fn):
+                    await fn(*args, **kwargs)
+                else:
+                    fn(*args, **kwargs)
+                return True
+            except TypeError:
+                # сигнатура не совпала — пробуем дальше
+                continue
+    return False
 
 @dp.callback_query(F.data == "admin_home")
 async def admin_home_cb(callback: types.CallbackQuery):
@@ -2429,6 +2506,123 @@ async def admin_reply_prompt_cb(callback: types.CallbackQuery):
         "<code>(Reply на уведомление) /reply Спасибо за обращение!</code>"
     )
     await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb_admin_back())
+
+# ===== ПОКУПАТЕЛИ =====
+
+@dp.callback_query(F.data == "admin_buyers_list")
+async def admin_buyers_list_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    # Пробуем вызвать твои существующие функции (любая, что найдётся)
+    ok = await _try_acall_any([
+        "admin_list_buyers_cb",      # вариант старого имени
+        "list_buyers_admin",         # вариант хелпера
+        "show_buyers_list",          # ещё вариант
+    ], callback)
+    if not ok:
+        await bot.send_message(callback.from_user.id, "ℹ️ Нет функции списка покупателей. Используй /buyers или добавь обработчик.")
+    # Возврат к разделу
+    await admin_buyers_cb(callback)
+
+@dp.callback_query(F.data == "admin_buyers_export")
+async def admin_buyers_export_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    ok = await _try_acall_any([
+        "admin_export_buyers_cb",
+        "export_buyers_csv",
+        "export_buyers_admin",
+    ], callback)
+    if not ok:
+        await bot.send_message(callback.from_user.id, "ℹ️ Нет экспорта CSV. Используй /export_buyers или добавь обработчик.")
+    await admin_buyers_cb(callback)
+
+@dp.callback_query(F.data == "admin_buyers_verify")
+async def admin_buyers_verify_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    ok = await _try_acall_any([
+        "admin_manual_verify_cb",
+        "open_manual_verify_screen",
+        "admin_verify_payments",
+    ], callback)
+    if not ok:
+        await bot.send_message(callback.from_user.id, "ℹ️ Нет ручной верификации. Добавь хэндлер или используй текущий поток подтверждения.")
+    await admin_buyers_cb(callback)
+
+# ===== СООБЩЕНИЯ / ДИАЛОГИ =====
+
+@dp.callback_query(F.data == "admin_msgs_inbox")
+async def admin_msgs_inbox_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    ok = await _try_acall_any([
+        "admin_inbox_cb",
+        "support_dialogs_admin",
+        "open_support_inbox",
+    ], callback)
+    if not ok:
+        await bot.send_message(callback.from_user.id, "ℹ️ Нет экрана диалогов. Добавь хэндлер или используй текущую систему поддержки.")
+    await admin_messages_cb(callback)
+
+@dp.callback_query(F.data == "admin_msg_contact")
+async def admin_msg_contact_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    ok = await _try_acall_any([
+        "admin_contact_user_cb",
+        "open_contact_user_screen",
+        "admin_message_user",
+    ], callback)
+    if not ok:
+        await bot.send_message(callback.from_user.id, "ℹ️ Нет экрана «связаться». Добавь хэндлер или воспользуйся /contact <user_id>.")
+    await admin_messages_cb(callback)
+
+@dp.callback_query(F.data == "admin_broadcast_verified")
+async def admin_broadcast_verified_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    ok = await _try_acall_any([
+        "admin_broadcast_verified_cb",
+        "start_verified_broadcast",
+        "open_broadcast_screen",
+    ], callback)
+    if not ok:
+        await bot.send_message(callback.from_user.id, "ℹ️ Нет экрана рассылки. Используй /broadcast или добавь хэндлер.")
+    await admin_messages_cb(callback)
+
+# ===== СЕРВИС =====
+
+@dp.callback_query(F.data == "admin_backup")
+async def admin_backup_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    ok = await _try_acall_any([
+        "admin_backup_cb",
+        "backup_to_gist",
+        "backup_all",
+        "make_backup_and_send",
+    ], callback)
+    if not ok:
+        await bot.send_message(callback.from_user.id, "ℹ️ Нет функции бэкапа. Добавь обработчик или команду /backup.")
+    await admin_service_cb(callback)
+
+@dp.callback_query(F.data == "admin_restore")
+async def admin_restore_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    ok = await _try_acall_any([
+        "admin_restore_cb",
+        "restore_from_gist",
+        "restore_all",
+    ], callback)
+    if not ok:
+        await bot.send_message(callback.from_user.id, "ℹ️ Нет функции восстановления. Добавь обработчик или команду /restore <gist_id>.")
+    await admin_service_cb(callback)
+
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    ok = await _try_acall_any([
+        "admin_stats_cb",
+        "send_stats_admin",
+        "show_stats_screen",
+    ], callback)
+    if not ok:
+        await bot.send_message(callback.from_user.id, "ℹ️ Нет функции статистики. Добавь обработчик или команду /stats.")
+    await admin_service_cb(callback)
 
 # ---------------------------
 # ПРИВЯЗКА FILE_ID через Telegram
