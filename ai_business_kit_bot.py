@@ -1067,7 +1067,7 @@ def kb_start(user_id: int) -> InlineKeyboardMarkup:
     """
     Главное меню.
     - Админ: Админ панель + ИИ + О нас + Поддержка
-    - До оплаты: Демо ИИ + Оплата (единая кнопка) + О нас + Поддержка
+    - До оплаты: Оплата и проверка + Демо ИИ + О нас + Поддержка
     - После оплаты: ИИ + О нас + Поддержка
     Всё в два столбца (kb.adjust).
     """
@@ -1078,24 +1078,24 @@ def kb_start(user_id: int) -> InlineKeyboardMarkup:
     # --- Меню для администратора ---
     if admin:
         kb.button(text="🛡️ Админ панель", callback_data="admin_panel_open")
-        kb.button(text="🤖 ИИ", callback_data="open_ai_modes")
-        kb.button(text="ℹ️ О нас", callback_data="open_about")
-        kb.button(text="💬 Поддержка", callback_data="support_request")
+        kb.button(text="🤖 ИИ",            callback_data="open_ai_modes")
+        kb.button(text="ℹ️ О нас",         callback_data="open_about")
+        kb.button(text="💬 Поддержка",     callback_data="support_request")
         kb.adjust(2, 2)
         return kb.as_markup()
 
     # --- Меню до оплаты (демо-доступ) ---
     if not verified:
-        kb.button(text="🧪 Демо ИИ", callback_data="ai_demo_open")
-        kb.button(text="💳 Оплата и проверка", callback_data="pay_unified_open")
-        kb.button(text="ℹ️ О нас", callback_data="open_about")
-        kb.button(text="💬 Поддержка", callback_data="support_request")
-        kb.adjust(2, 2)
+        kb.button(text="💳 Оплата и проверка", callback_data="pay_unified_open")  # единая точка входа
+        kb.button(text="🧪 Демо ИИ",           callback_data="ai_demo_open")
+        kb.button(text="ℹ️ О нас",            callback_data="open_about")
+        kb.button(text="💬 Поддержка",        callback_data="support_request")
+        kb.adjust(2, 2)  # две строки по две кнопки
         return kb.as_markup()
 
     # --- Меню после оплаты (полнодоступ) ---
-    kb.button(text="🤖 ИИ", callback_data="open_ai_modes")
-    kb.button(text="ℹ️ О нас", callback_data="open_about")
+    kb.button(text="🤖 ИИ",        callback_data="open_ai_modes")
+    kb.button(text="ℹ️ О нас",     callback_data="open_about")
     kb.button(text="💬 Поддержка", callback_data="support_request")
     kb.adjust(2, 1)
     return kb.as_markup()
@@ -1283,20 +1283,27 @@ async def show_verified_home(chat_id: int):
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
     user_id = message.from_user.id
-    username = message.from_user.username or ""
 
-    # ✅ Приветствие без автосенд-презентации
+    # ✅ Приветствие — полностью HTML
     welcome_text = (
-        "<b>🚀 AI Business Kit — готовый комплект для запуска ИИ-продукта.</b>\n\n"
-        "Собрали всё, чтобы за 1 день запустить свой цифровой бизнес:\n"
+        "<b>🚀 AI Business Kit — готовый комплект для запуска ИИ-продукта</b>\n\n"
+        "За 1 день вы получите:\n"
         "• 100 промптов для ChatGPT\n"
-        "• Telegram-бот-шаблон\n"
-        "• PDF-гайд и материалы\n\n"
-        "👇 Нажмите «Получить доступ» или изучите возможности ниже."
+        "• шаблон Telegram-бота\n"
+        "• PDF-гайд и все необходимые материалы\n\n"
+        "<b>Что дальше?</b>\n"
+        "• <b>«💳 Оплата и проверка»</b> — получить QR и отправить чек\n"
+        "• <b>«🧪 Демо ИИ»</b> — попробовать ассистента бесплатно\n"
+        "• <b>«ℹ️ О нас»</b> — узнать подробнее\n"
+        "• <b>«💬 Поддержка»</b> — помощь и вопросы\n"
     )
 
-    await message.answer(welcome_text, reply_markup=kb_start(message.from_user.id))
-
+    await message.answer(
+        welcome_text,
+        reply_markup=kb_start(user_id),
+        parse_mode="HTML",
+    )
+    
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
     await message.answer(
