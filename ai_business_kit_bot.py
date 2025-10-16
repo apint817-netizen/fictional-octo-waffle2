@@ -661,9 +661,6 @@ AI_SYSTEM_PROMPT_ADMIN_RAW = _env_or_default(
     "При критике формируй служебный сигнал ##ADMIN_ALERT##."
 )
 
-print("[PROMPT_USER]", AI_SYSTEM_PROMPT_USER_RAW[:120].replace("\n", " "))
-print("[PROMPT_ADMIN]", AI_SYSTEM_PROMPT_ADMIN_RAW[:120].replace("\n", " "))
-
 # ---------------------------
 # БАЗЫ ДАННЫХ (JSON файлы)
 # ---------------------------
@@ -996,6 +993,9 @@ def save_paid_user(user_id: int, username: str):
 def is_user_verified(user_id: int) -> bool:
     return load_paid_users().get(str(user_id), {}).get("verified", False)
 
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
 def clear_database():
     """Полная очистка БД."""
     save_users({})
@@ -1143,7 +1143,7 @@ def _menu_kb_for(user_id: int) -> InlineKeyboardMarkup:
     is_admin = (user_id == ADMIN_ID)
     if is_user_verified(user_id):
         return kb_after_payment(is_admin=is_admin)
-    return kb_start(is_admin=is_admin)
+    return kb_start(user_id)
 
 def kb_back_main() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
