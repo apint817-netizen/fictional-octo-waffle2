@@ -1,5 +1,3 @@
-from aiogram.fsm.state import StatesGroup, State
-from aiogram import F
 # ai_business_kit_bot.py — v2.2 (full, commented)
 # ============================================================
 # Бот выдачи «AI Business Kit» после подтверждения оплаты
@@ -11,6 +9,8 @@ from aiogram import F
 # - Встроенный ИИ-помощник для пользователя и для админа с разными системными промптами
 # - Улучшены callback-ответы: безопасная обёртка _safe_cb_answer, чтобы не ловить таймаут
 # ============================================================
+
+from __future__ import annotations
 
 # ---------------------------
 # БАЗОВЫЕ ИМПОРТЫ
@@ -380,6 +380,16 @@ async def stop_heartbeat():
         logging.info("[HEARTBEAT] stopped")
 # ======================================================================
 
+ADMIN_AI_RATE_LIMIT_SEC = 2
+_last_admin_ai_ts: dict[int, float] = {}
+
+def _admin_ai_too_fast(uid: int) -> bool:
+    import time
+    now = time.time()
+    ts = _last_admin_ai_ts.get(uid, 0)
+    _last_admin_ai_ts[uid] = now
+    return (now - ts) < ADMIN_AI_RATE_LIMIT_SEC
+
 SBP_QR_FILE_ID     = (os.getenv("SBP_QR_FILE_ID") or "").strip()
 SBP_QR_URL         = (os.getenv("SBP_QR_URL") or "").strip()
 SBP_PRICE_RUB      = int(os.getenv("SBP_PRICE_RUB") or 3500)
@@ -595,65 +605,42 @@ def _demo_register_hit(uid: int):
 # ---------------------------
 # СИСТЕМНЫЕ ПРОМПТЫ ДЛЯ ИИ
 # ---------------------------
+AI_SYSTEM_PROMPT_ADMIN_RAW = os.getenv("AI_SYSTEM_PROMPT_ADMIN") or (
+    "Ты — технический ассистент для администратора бота.\n"
+    "Задачи: отладка и улучшение бота (aiogram), вебхук/поллинг, деплой (Render/Railway/Heroku), "
+    "работа с .env/секретами, БД (SQLite/JSON), обработка платежей/верификаций, логирование, "
+    "диагностика ошибок и оптимизация UX.\n"
+    "Формат: Telegram HTML — краткие чек-листы, пошаговые инструкции, <code> для фрагментов кода и команд.\n"
+    "Всегда: 1) Диагностика; 2) Шаги с примерами; 3) <b>Дальше</b>: 2–3 следующих действия."
+)
+
+AI_SYSTEM_PROMPT_DEMO_RAW = os.getenv("AI_SYSTEM_PROMPT_DEMO") or (
+    "Ты — упрощённый ИИ-ассистент в Telegram.\n"
+    "Ограничения демо: отвечай кратко (до 6–8 предложений), без вложений и больших код-блоков.\n"
+    "Используй разрешённую HTML-разметку: <b>, <i>, <code> (короткие фрагменты), списки.\n"
+    "Структура: 1) <b>Заголовок</b>; 2) краткий ответ; 3) <b>Дальше</b>: 1–2 шага."
+)
+
+AI_SYSTEM_PROMPT_STANDARD_RAW = os.getenv("AI_SYSTEM_PROMPT_STANDARD") or (
+    "Ты — Стандартный GPT-ассистент в Telegram. Отвечай по делу, структурно и полезно.\n"
+    "Используй HTML-разметку (<b>, <i>, <code>, списки). Структура: заголовок → решение → <b>Дальше</b>: 2–3 шага."
+)
+
+AI_SYSTEM_PROMPT_GENERATOR_RAW = os.getenv("AI_SYSTEM_PROMPT_GENERATOR") or (
+    "Ты — Реализатор промптов (коуч). Превращай запросы в готовые материалы:\n"
+    "— тексты (описания, инструкции, посты);\n"
+    "— структуры (план, чек-лист, ТЗ);\n"
+    "— фрагменты кода/данных (если просят).\n"
+    "Формат: Telegram HTML (заголовки, списки, <code> для кода). Коротко, по делу, без воды.\n"
+    "В конце добавляй блок <b>Дальше</b> с 2–3 конкретными шагами."
+)
+
 AI_SYSTEM_PROMPT_SETUP_RAW = os.getenv("AI_SYSTEM_PROMPT_SETUP") or (
-    "Ты — технический консультант по установке Telegram-бота «{BRAND_NAME}». "
-    "Отвечай кратко и по-русски, шагами. Помогай с: .env, токеном бота, ADMIN_ID, "
-    "Render (webhook), переменными окружения, логами, aiogram/FastAPI. "
-    "Давай конкретные команды и примеры. Если нужно — предложи чек-лист. Контакт: {BRAND_SUPPORT_TG}."
-)
-
-AI_SYSTEM_PROMPT_UNIVERSAL_RAW = os.getenv("AI_SYSTEM_PROMPT_UNIVERSAL") or (
-    "Ты — универсальный ИИ-исполнитель. НЕ обсуждай, а ВЫПОЛНЯЙ промпты пользователя. "
-    "Пиши по-русски, структурно и по делу. Всегда давай законченный результат: тексты, планы, шаблоны, "
-    "пошаговые инструкции, списки, чек-листы, таблицы (Markdown), куски кода. "
-    "Уточняй только критичное; иначе делай разумные допущения и кратко их указывай. Формат: "
-    "1) Заголовок результата; 2) Готовый результат; 3) «Дальше» — 2–3 шага."
-)
-
-AI_SYSTEM_PROMPT_BRAND_RAW = os.getenv("AI_SYSTEM_PROMPT_BRAND") or (
-    "Ты — ассистент бренда «{BRAND_NAME}». Отвечай кратко и по делу, по-русски. "
-    "Рассказывай только про раздел «О бренде»: миссия, ценность, для кого продукт, что внутри набора "
-    "«{PRODUCT_NAME}», чем он помогает. В конце дай 2–3 чётких следующых шага. Контакт: {BRAND_SUPPORT_TG}."
-)
-
-AI_SYSTEM_PROMPT_PAY_RAW = os.getenv("AI_SYSTEM_PROMPT_PAY") or (
-    "Ты — ассистент по оплате бренда «{BRAND_NAME}». Говори чётко, по-русски. "
-    "Покажи варианты оплаты (Boosty/СБП/карта), шаги, что делать после оплаты, куда прислать чек. "
-    "Если просят реквизиты — объясни как их получить. В конце дай 2–3 конкретных шага. Контакт: {BRAND_SUPPORT_TG}."
-)
-        
-AI_SYSTEM_PROMPT_USER_DEMO_RAW = os.getenv("AI_SYSTEM_PROMPT_USER_DEMO") or (
-    "Ты — демо-ассистент набора «{BRAND_NAME}». Отвечай кратко, по делу и по-русски. "
-    "Не раскрывай приватные материалы, не отправляй файлы/ключи, а в конце дай 1–2 шага, как купить набор."
-)
-
-AI_SYSTEM_PROMPT_UNIVERSAL_RAW = os.getenv("AI_SYSTEM_PROMPT_UNIVERSAL_RAW") or (
-    "Ты — умный, харизматичный и вдохновляющий AI-ассистент цифрового продукта «AI Business Kit» от UpgradeLab.\n\n"
-    "🎯 Твоя миссия — помогать пользователю использовать искусственный интеллект для развития и автоматизации бизнеса:\n"
-    "• создавать продающие тексты, описания и стратегии;\n"
-    "• придумывать идеи продуктов и сервисов;\n"
-    "• помогать с контентом, маркетингом и брендингом;\n"
-    "• давать готовые шаблоны, советы и чёткие шаги.\n\n"
-    "Отвечай уверенно, структурно и по делу. Объясняй просто, будто ты опытный наставник. "
-    "Пиши на русском языке. Если вопрос не по теме бизнеса, автоматизации или ИИ — направь пользователя вернуться к сути.\n\n"
-    "⚡ Это демо-режим. Не упоминай оплату или файлы — просто покажи, на что ты способен."
-)
-
-AI_SYSTEM_PROMPT_USER_RAW = _must_get(
-    "AI_SYSTEM_PROMPT_USER_KIT",
-    # Безопасный дефолт, если забыли положить переменную в .env.kit
-    "Ты — дружелюбный ИИ-консультант набора «AI Business Kit». Отвечай кратко, по делу и по-русски. "
-    "Помогаешь с получением материалов, установкой бота, оплатой и базовым маркетингом. "
-    "Если нужна поддержка человека — дай ссылку {BRAND_SUPPORT_TG}. "
-    "В конце сложных ответов предлагай 3 шага «что сделать дальше»."
-)
-
-AI_SYSTEM_PROMPT_ADMIN_RAW = _must_get(
-    "AI_SYSTEM_PROMPT_ADMIN_KIT",
-    "Ты — техничный помощник владельца «AI Business Kit». Даёшь точные подсказки по aiogram v3, "
-    "логике выдачи файлов, кэшу file_id, рассылке, JSON-базе paid_users.json и kit_assets.json. "
-    "Если видишь проблему — предложи конкретный патч/фрагмент кода. "
-    "При критике формируй служебный сигнал ##ADMIN_ALERT##."
+    "Ты — ИИ-инженер по установке Telegram-бота (шаблон из набора пользователя).\n"
+    "Цель — быстро довести до результата: .env (токены, BASE_URL, WEBHOOK_SECRET), вебхук/поллинг,\n"
+    "деплой (Render/Railway/Heroku), БД (SQLite/JSON), админ-команды, проверка оплаты, логирование, устранение ошибок.\n"
+    "Форматируй для Telegram HTML: пошагово, чек-листами, <code> для фрагментов. Без воды.\n"
+    "Всегда: 1) Диагностика; 2) Чёткие шаги с примерами; 3) <b>Дальше</b>: 2–3 шага."
 )
 
 print("[PROMPT_USER]", AI_SYSTEM_PROMPT_USER_RAW[:120].replace("\n", " "))
@@ -1058,52 +1045,78 @@ def kb_ai_choice_main() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")],
     ])
     
-def kb_start(is_admin: bool = False) -> InlineKeyboardMarkup:
+def kb_start(user_id: int) -> InlineKeyboardMarkup:
+    """
+    Главное меню.
+    - Админ: Админ панель + ИИ + О нас + Поддержка
+    - До оплаты: Демо ИИ + Оплата и проверка + О нас + Поддержка
+    - После оплаты: ИИ (подменю) + О нас + Поддержка
+    Всё в два столбца (kb.adjust).
+    """
     kb = InlineKeyboardBuilder()
+    verified = is_user_verified(user_id)
+    admin = is_admin(user_id)
 
-    # 💳 Оплата и подтверждение
-    kb.button(text="💳 Оплата по СБП (QR)", callback_data="pay_sbp")
-    kb.button(text="✅ Я оплатил(а)", callback_data="request_verification")
+    if admin:
+        # Меню для администратора
+        kb.button(text="🛡️ Админ панель", callback_data="admin_panel_open")
+        kb.button(text="🤖 ИИ", callback_data="open_ai_modes")
+        kb.button(text="ℹ️ О нас", callback_data="open_about")
+        kb.button(text="💬 Поддержка", callback_data="support_request")
+        kb.adjust(2, 2)
 
-    # 🧪 Демо и ИИ (демо вынесено отдельно)
-    kb.button(text="🧪 Демо GPT", callback_data="ai_demo_open")
-    kb.button(text="🤖 ИИ: бренд/оплата", callback_data="ai_choice")
+    elif not verified:
+        # До оплаты
+        kb.button(text="🧪 Демо ИИ", callback_data="ai_demo_open")
+        kb.button(text="💳 Оплата и проверка", callback_data="pay_unified_open")
+        kb.button(text="ℹ️ О нас", callback_data="open_about")
+        kb.button(text="💬 Поддержка", callback_data="support_request")
+        kb.adjust(2, 2)
 
-    # 💬 Поддержка и ❓ FAQ
-    kb.button(text="💬 Поддержка", callback_data="support_request")
-    kb.button(text="❓ FAQ", callback_data="faq")
-
-    # ↩️ В меню — ДОБАВЛЯЕМ в основное меню
-    kb.button(text="↩️ В меню", callback_data="back_to_main")
-
-    # 🛠 Админ (если админ)
-    if is_admin:
-        kb.button(text="🛠 Админ", callback_data="admin_home")
-        # разложение по рядам: (оплата) / (я оплатил) / (демо + ИИ) / (поддержка) / (FAQ) / (в меню) / (админ)
-        kb.adjust(1, 1, 2, 1, 1, 1, 1)
     else:
-        # (оплата) / (я оплатил) / (демо + ИИ) / (поддержка) / (FAQ) / (в меню)
-        kb.adjust(1, 1, 2, 1, 1, 1)
+        # После оплаты
+        kb.button(text="🤖 ИИ", callback_data="open_ai_modes")
+        kb.button(text="ℹ️ О нас", callback_data="open_about")
+        kb.button(text="💬 Поддержка", callback_data="support_request")
+        kb.adjust(2, 1)
 
     return kb.as_markup()
-    
 
+def kb_ai_modes() -> InlineKeyboardMarkup:
+    """
+    Подменю выбора режима ИИ для оплаченных пользователей.
+    """
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🤖 Стандарт GPT",              callback_data="ai_standard_open")
+    kb.button(text="⚡ Реализатор промптов (коуч)", callback_data="ai_generator_open")
+    kb.button(text="🛠 Установка бота из шаблона",  callback_data="ai_setup_open")
+    kb.button(text="↩️ Назад",                      callback_data="back_to_main")
+    kb.adjust(2, 2)  # две строки: (2 кнопки / 2 кнопки)
+    return kb.as_markup()    
+    
 def kb_after_payment(is_admin: bool = False) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="📦 Скачать материалы", callback_data="get_files_again")
-    kb.button(text="🤖 ИИ-помощник",       callback_data="ai_chat_open")
-    kb.button(text="💬 Поддержка",         callback_data="support_request")
+    kb.button(text="🔄 Получить файлы снова", callback_data="get_files_again")     # было resend_kit → есть get_files_again
+    kb.button(text="🤖 ИИ (выбор режима)", callback_data="ai_choice_main")                       # уже есть ai_open
+    kb.button(text="ℹ️ О нас", callback_data="open_about")
+    kb.button(text="💬 Поддержка", callback_data="support_request")
     if is_admin:
         kb.button(text="🛠 Админ", callback_data="admin_home")
-    kb.adjust(2, 2)  # строго 2 колонки
+        kb.adjust(1, 2, 1, 1)
+    else:
+        kb.adjust(1, 2, 1)
     return kb.as_markup()
-# ✅ Универсальный выбор меню для клиента/админа
 
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    
+    # ✅ Универсальный выбор меню для клиента/админа
 def _menu_kb_for(user_id: int) -> InlineKeyboardMarkup:
-    is_admin = ('ADMIN_ID' in globals() and user_id == ADMIN_ID)
+    is_admin = (user_id == ADMIN_ID)
     if is_user_verified(user_id):
         return kb_after_payment(is_admin=is_admin)
-    return kb_main_min(user_id)
+    return kb_start(is_admin=is_admin)
 
 def kb_back_main() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1116,99 +1129,6 @@ def kb_support() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👨‍💼 Контакт менеджера", callback_data="support_manager_info")],
         [InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")]
     ])
-
-# === Минималка главного меню + «Домой» + «Что внутри / Презентация» ===
-
-@dp.callback_query(F.data == "back_home_min")
-async def back_home_min_cb(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    welcome = (
-        "👋 <b>AI Business Kit</b>\n"
-        "Материалы и шаблон бота, чтобы запустить продукт на ИИ за вечер.\n\n"
-        "Выбери действие ниже:"
-    )
-    await safe_edit(
-        callback.message,
-        text=welcome if callback.message.text is not None else None,
-        caption=welcome if callback.message.caption is not None else None,
-        reply_markup=kb_main_min(callback.from_user.id),
-        parse_mode="HTML",
-    )
-
-@dp.callback_query(F.data == "kit_inside")
-async def kit_inside_cb(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    text = (
-        "📦 <b>Внутри набора</b>\n"
-        "• 100 промптов для бизнеса\n"
-        "• Шаблон Telegram-бота\n"
-        "• PDF-гайд (10 мин)\n"
-        "• README и .env.example"
-    )
-    await safe_edit(
-        callback.message,
-        text=text if callback.message.text is not None else None,
-        caption=text if callback.message.caption is not None else None,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📄 Открыть презентацию", callback_data="open_presentation")],
-            [InlineKeyboardButton(text="📎 Скачать PDF", callback_data="download_presentation")],
-            [InlineKeyboardButton(text="💳 Получить доступ", callback_data="pay_open")],
-            [InlineKeyboardButton(text="↩️ Домой", callback_data="back_home_min")],
-        ]),
-        parse_mode="HTML",
-    )
-
-async def _show_presentation(chat_id: int, as_edit: types.Message | None = None):
-    """
-    Универсальная выдача презентации:
-    1) пробуем file_id из assets/env
-    2) иначе URL
-    3) иначе даём текст с ссылкой
-    """
-    caption = "🖼️ <b>Презентация продукта</b>\nКоротко о составе и сценариях использования."
-    msg = None
-    try:
-        msg = await _send_document_safely(
-            chat_id=chat_id,
-            file_id_env=(os.getenv("PDF_PRESENTATION_FILE_ID") or "").strip(),
-            url=(os.getenv("PDF_PRESENTATION_URL") or "").strip(),
-            filename="AI_Business_Kit_Presentation.pdf",
-            caption=caption,
-            cache_key="presentation_file_id",
-            file_id_override=get_asset_file_id("presentation"),
-        )
-    except Exception as e:
-        logging.warning("Presentation send failed: %s", e)
-
-    if msg is None:
-        # явный фолбэк — текст + (возможно) ссылка
-        url = (os.getenv("PDF_PRESENTATION_URL") or "").strip()
-        text = caption + (f"\n\n🔗 {url}" if url else "\n\n(файл недоступен)")
-        await bot.send_message(chat_id, text, parse_mode="HTML")
-
-@dp.callback_query(F.data == "open_presentation")
-async def open_presentation_cb(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    await _show_presentation(callback.message.chat.id)
-
-@dp.callback_query(F.data == "download_presentation")
-async def download_presentation_cb(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    await _show_presentation(callback.message.chat.id)
-
-# Выбор режима ИИ (до входа в чат) — компактные «чипсы»
-def kb_ai_choice_for(user_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⚡ Генератор", callback_data="ai_universal_open"),
-            InlineKeyboardButton(text="🛠 Установка", callback_data="ai_setup_open"),
-        ],
-        [
-            InlineKeyboardButton(text="ℹ️ О продукте", callback_data="ai_brand_open"),
-            InlineKeyboardButton(text="💳 Оплата", callback_data="ai_pay_open"),
-        ],
-        [InlineKeyboardButton(text="↩️ Домой", callback_data="back_home_min")],
-    ])    
 
 def kb_admin_panel() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1240,11 +1160,42 @@ def kb_admin_panel() -> InlineKeyboardMarkup:
         ]
     ])
 
-def kb_ai_chat(is_admin: bool) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="⏹️ Завершить чат", callback_data=("ai_admin_close" if is_admin else "ai_close")),
-        InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main"),
-    ]])
+# [KEYBOARD — О НАС]
+def kb_about() -> InlineKeyboardMarkup:
+    """
+    Вложенное меню 'О нас'.
+    """
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❓ FAQ", callback_data="open_faq")
+    kb.button(text="📘 Презентация", callback_data="open_presentation")
+    kb.button(text="↩️ Назад", callback_data="back_to_main")
+    kb.adjust(2, 1)  # FAQ + Презентация / Назад
+    return kb.as_markup()    
+
+    def kb_ai_chat(is_admin: bool = False) -> InlineKeyboardMarkup:
+        kb = InlineKeyboardBuilder()
+
+        # Общие кнопки для всех
+        kb.button(
+            text="⏹️ Завершить чат",
+            callback_data=("ai_admin_close" if is_admin else "ai_close")
+        )
+        kb.button(text="↩️ В меню", callback_data="back_to_main")
+
+        # Дополнительные инструменты для админа
+        if is_admin:
+            kb.button(text="📥 Покупатели", callback_data="admin_buyers")
+            kb.button(text="📤 Экспорт CSV", callback_data="admin_export_buyers")
+            kb.button(text="💾 Backup", callback_data="create_backup")
+            kb.button(text="♻️ Restore", callback_data="admin_restore")
+
+            # Раскладка: первая строка — завершить/меню, затем по 2 кнопки в ряд
+            kb.adjust(2, 2, 2)
+        else:
+            # Для обычного пользователя — 2 кнопки в одной строке
+            kb.adjust(2)
+
+        return kb.as_markup()
 
 def kb_admin_back() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1268,50 +1219,56 @@ def kb_broadcast_confirm() -> InlineKeyboardMarkup:
 def kb_verification_back() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="⬅️ В меню", callback_data="back_to_main")
-    kb.button(text="🧪 Демо GPT", callback_data="ai_demo_open")              # новая отдельная
-    kb.button(text="🤖 ИИ: бренд/оплата", callback_data="ai_choice")        # переименованная
+    kb.button(text="🧪 Демо GPT", callback_data="ai_demo_open")
     kb.button(text="💬 Поддержка", callback_data="support_request")
-    kb.adjust(1, 2, 1)  # (В меню) / (Демо + ИИ выбор) / (Поддержка)
+    kb.adjust(1, 2)  # Меню / (Демо + Поддержка)
     return kb.as_markup()
-
 
 def _verified_home_text() -> str:
     return (
-        "🎉 <b>Доступ активирован</b>\n"
-        "Материалы готовы к выдаче."
+        "🎉 <b>Доступ к AI Business Kit активирован!</b>\n\n"
+        "Поздравляем! У вас полноценный комплект для быстрого запуска цифрового продукта с ИИ.\n\n"
+        "📦 <b>В наборе:</b>\n"
+        "• 100 готовых ChatGPT-промптов для бизнеса и контента\n"
+        "• Шаблон Telegram-бота с CRM и автоответами\n"
+        "• PDF-гайд по запуску за 10 минут\n"
+        "• README с инструкциями и рекомендациями\n"
+        "• <b>.env.example</b> (переименуйте в <code>.env</code> и заполните переменные)\n\n"
+        "👇 <b>Что сделать прямо сейчас</b> (кнопки ниже):\n"
+        "• <b>🔄 Получить файлы снова</b> — если материалы не дошли или хотите переслать их ещё раз\n"
+        "• <b>🤖 ИИ (выбор режима)</b> — открыть ИИ-ассистента и выбрать нужный режим (универсал/бренд/оплата)\n"
+        "• <b>ℹ️ О нас</b> — кратко о продукте и возможностях\n"
+        "• <b>💬 Поддержка</b> — задать вопрос и получить помощь\n\n"
+        "💡 Рекомендуем начать с PDF-гайда: там пошагово показано, как развернуть шаблонного бота и применить промпты."
     )
 
+async def show_verified_home(chat_id: int):
+    await bot.send_message(
+        chat_id,
+        _verified_home_text(),
+        reply_markup=kb_after_payment(is_admin=(chat_id == ADMIN_ID)),
+        parse_mode="HTML",
+    )
 
-@dp.message(Command("start"))
+# ---------------------------
+# /start, /help, /about
+# ---------------------------
+@dp.message(CommandStart())
 async def start_handler(message: types.Message):
-    uid = message.from_user.id
+    user_id = message.from_user.id
+    username = message.from_user.username or ""
 
-    if is_user_verified(uid):
-        await show_verified_home(message.chat.id)
-        return
-
-    # ▼ обработка диплинка: /start presentation
-    payload = None
-    try:
-        if message.text and " " in message.text:
-            payload = message.text.split(" ", 1)[1].strip().lower()
-    except Exception:
-        payload = None
-
-    if payload in {"presentation", "prez", "pitch"}:
-        await _show_presentation(message.chat.id)
-        return
-
-    welcome = (
-        "👋 <b>AI Business Kit</b>\n"
-        "Запусти продукт на ИИ за вечер: материалы + бот + гайд.\n\n"
-        "Выбери действие ниже:"
+    # ✅ Приветствие без автосенд-презентации
+    welcome_text = (
+        "<b>🚀 AI Business Kit — готовый комплект для запуска ИИ-продукта.</b>\n\n"
+        "Собрали всё, чтобы за 1 день запустить свой цифровой бизнес:\n"
+        "• 100 промптов для ChatGPT\n"
+        "• Telegram-бот-шаблон\n"
+        "• PDF-гайд и материалы\n\n"
+        "👇 Нажмите «Получить доступ» или изучите возможности ниже."
     )
-    await message.answer(
-        welcome,
-        reply_markup=kb_main_min(uid),
-        parse_mode="HTML"
-    )
+
+    await message.answer(welcome_text, reply_markup=kb_start(message.from_user.id))
 
 @dp.message(Command("help"))
 async def help_cmd(message: types.Message):
@@ -1326,10 +1283,6 @@ async def help_cmd(message: types.Message):
         "• Шаблон бота (Python файл)\n",
         parse_mode="HTML"
     )
-
-@dp.message(Command("presentation"))
-async def presentation_cmd(message: types.Message):
-    await _show_presentation(message.chat.id)    
 
 @dp.message(Command("about"))
 async def about_cmd(message: types.Message):
@@ -1349,88 +1302,30 @@ async def about_cmd(message: types.Message):
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
 
-# ==== DEMO QUOTA HELPERS ====
-_DEMO_DB = os.path.join(BASE_DIR if 'BASE_DIR' in globals() else os.getcwd(), "demo_usage.json")
-
-def _demo_load():
-    try:
-        with open(_DEMO_DB, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-def _demo_save(d):
-    try:
-        with open(_DEMO_DB, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False)
-    except Exception:
-        pass
-
-def _demo_quota_ok(uid: int):
-    limit = int(globals().get("DEMO_AI_DAILY_LIMIT", 5))
-    cooldown = int(globals().get("DEMO_AI_COOLDOWN_SEC", 10))
-    data = _demo_load()
-    u = data.get(str(uid), {"count": 0, "ts": 0, "day": ""})
-
-    from datetime import datetime
-    day = datetime.utcnow().strftime("%Y-%m-%d")
-    if u.get("day") != day:
-        u = {"count": 0, "ts": 0, "day": day}
-
-    import time
-    now = int(time.time())
-    if cooldown > 0 and (now - u.get("ts", 0)) < cooldown:
-        remain = cooldown - (now - u.get("ts", 0))
-        return False, f"⏳ Подождите ещё {remain} сек. (демо-ограничение)"
-    if u.get("count", 0) >= limit:
-        return False, f"🧪 Демо-лимит: {limit} сообщений/день. Полный доступ после оплаты."
-    return True, None
-
-def _demo_inc(uid: int):
-    data = _demo_load()
-    u = data.get(str(uid), {"count": 0, "ts": 0, "day": ""})
-    from datetime import datetime
-    day = datetime.utcnow().strftime("%Y-%m-%d")
-    if u.get("day") != day:
-        u = {"count": 0, "ts": 0, "day": day}
-    import time
-    u["count"] = u.get("count", 0) + 1
-    u["ts"] = int(time.time())
-    data[str(uid)] = u
-    _demo_save(data)
-
 FAQ_TEXT = (
     "❓ <b>FAQ</b>\n\n"
-    "1) Токен — @BotFather → /newbot\n"
-    "2) Свой ID — @myidbot / @userinfobot\n"
-    "3) Шаблон — pip install aiogram → python bot_template.py\n"
-    "4) Демо товары — уже в базе шаблона\n"
-    "5) Ответ пользователю — кнопка «✉️» в уведомлении или команда /reply\n"
+    "<b>Как оплатить?</b>\n"
+    "— Нажмите «💳 Оплата и проверка» в главном меню. Оплатите по СБП и пришлите скрин чека.\n\n"
+    "<b>Когда откроется доступ?</b>\n"
+    "— После подтверждения админом (обычно быстро). Мы напишем в этот чат.\n\n"
+    "<b>Что входит в набор?</b>\n"
+    "— 100 промптов, презентация, PDF-гайд и шаблон Telegram-бота.\n\n"
+    "<b>Где спросить помощь?</b>\n"
+    "— Кнопка «💬 Поддержка» в меню."
 )
 
 @dp.message(Command("faq"))
 async def faq_cmd(message: types.Message):
-    sbp_url = (os.getenv("SBP_QR_URL") or "").strip()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить по СБП", url=sbp_url)] if sbp_url else [],
-        [InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")],
-    ])
-    await message.answer(FAQ_TEXT, reply_markup=kb, parse_mode="HTML")
+    await message.answer(FAQ_TEXT, reply_markup=kb_about(), parse_mode="HTML")
 
 @dp.callback_query(F.data.in_(("faq", "open_faq")))
 async def faq_cb(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
-    sbp_url = (os.getenv("SBP_QR_URL") or "").strip()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить по СБП", url=sbp_url)] if sbp_url else [],
-        [InlineKeyboardButton(text="↩️ В меню", callback_data="back_to_main")],
-    ])
-    # ВАЖНО: используем safe_edit вместо edit_text
     await safe_edit(
         callback.message,
         text=FAQ_TEXT if callback.message.text is not None else None,
         caption=FAQ_TEXT if callback.message.caption is not None else None,
-        reply_markup=kb,
+        reply_markup=kb_about(),  # назад в раздел "О нас"
         parse_mode="HTML",
     )
     
@@ -1505,21 +1400,6 @@ async def support_manager_info(callback: types.CallbackQuery):
 # ---------------------------
 # ЧАТ С ИИ (пользователь/админ)
 # ---------------------------
-@dp.callback_query(F.data == "ai_universal_open")
-async def ai_universal_open(callback: types.CallbackQuery, state: FSMContext):
-    await _safe_cb_answer(callback)
-    await state.set_state(AIChatStates.chatting)
-    await state.update_data(ai_is_admin=(callback.from_user.id == ADMIN_ID), ai_mode="universal")
-    text = ("ℹ️ ИИ: <b>Универсал</b> активен.\n"
-            "Дай промпт — получишь готовый результат: текст, план, инструкцию, шаблон, код.")
-    await safe_edit(
-        callback.message,
-        text=text if callback.message.text is not None else None,
-        caption=text if callback.message.caption is not None else None,
-        reply_markup=kb_ai_chat(is_admin=(callback.from_user.id == ADMIN_ID)),
-        parse_mode="HTML",
-    )
-
 @dp.callback_query(F.data == "ai_setup_open")
 async def ai_setup_open(callback: types.CallbackQuery, state: FSMContext):
     await _safe_cb_answer(callback)
@@ -1535,105 +1415,153 @@ async def ai_setup_open(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="HTML",
     )
 
-@dp.callback_query(F.data == "ai_open_demo")
-async def ai_open_demo_cb(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "ai_demo_open")
+async def ai_demo_open_cb(callback: types.CallbackQuery, state: FSMContext):
     await _safe_cb_answer(callback)
     await state.set_state(AIChatStates.chatting)
-    # важное: фиксируем режим «универсал»
-    await state.update_data(ai_is_admin=False, ai_mode="universal")
+    await state.update_data(ai_is_admin=False, ai_mode="demo")
     await callback.message.answer(
-        "🤖 <b>ИИ активен и готов к работе!</b>\n\n"
-        "Это универсальный режим: используйте его, чтобы создавать тексты, идеи, описания и решения для задач прямо здесь.",
+        "🧪 Демо-режим включён. Ограничения: короткие ответы, без вложений/длинного кода, лимит запросов.\nНапишите запрос:",
         reply_markup=kb_ai_chat(is_admin=False),
-        parse_mode="HTML"
-    )
-
-@dp.callback_query(F.data == "ai_brand_open")
-async def ai_brand_open_cb(callback: types.CallbackQuery, state: FSMContext):
-    await _safe_cb_answer(callback)
-    await state.set_state(AIChatStates.chatting)
-    await state.update_data(ai_is_admin=False, ai_mode="brand")
-    await callback.message.answer(
-        "ℹ️ <b>ИИ: «О бренде» активен.</b>\nСпроси: «что внутри набора?», «для кого продукт?»",
-        reply_markup=kb_ai_chat(is_admin=False),
-        parse_mode="HTML"
-    )
-
-@dp.callback_query(F.data == "ai_pay_open")
-async def ai_pay_open_cb(callback: types.CallbackQuery, state: FSMContext):
-    await _safe_cb_answer(callback)
-    await state.set_state(AIChatStates.chatting)
-    await state.update_data(ai_is_admin=False, ai_mode="pay")
-    await callback.message.answer(
-        "💳 <b>ИИ: «Оплата» активен.</b>\nСпроси: «как оплатить?», «что делать после оплаты?»",
-        reply_markup=kb_ai_chat(is_admin=False),
-        parse_mode="HTML"
-    )
-
-@dp.callback_query(F.data == "ai_choice_main")
-async def ai_choice_main_cb(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    # показываем выбор «универсал/установка»
-    text = "Выберите режим ИИ 👇"
-    await safe_edit(
-        callback.message,
-        text=text if callback.message.text is not None else None,
-        caption=text if callback.message.caption is not None else None,
-        reply_markup=kb_ai_choice_main(),
         parse_mode="HTML",
     )
 
-@dp.callback_query(F.data == "ai_choice")
-async def ai_choice_cb(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    kb = kb_ai_choice_for(callback.from_user.id)
-    await safe_edit(
-        callback.message,
-        text="Выбери режим работы ИИ 👇" if callback.message.text is not None else None,
-        caption="Выбери режим работы ИИ 👇" if callback.message.caption is not None else None,
-        reply_markup=kb,
-        parse_mode="HTML",
-    )
-
-@dp.callback_query(F.data == "ai_open")
-async def ai_open_cb(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data == "open_ai_modes")
+async def open_ai_modes_cb(callback: types.CallbackQuery):
     if not is_user_verified(callback.from_user.id):
-        await _safe_cb_answer(callback, "Сначала подтвердите оплату.", show_alert=True)
+        await _safe_cb_answer(callback, "Доступно после оплаты.", show_alert=True)
+        return
+    await _safe_cb_answer(callback)
+    await callback.message.edit_text(
+        "<b>🤖 Режимы ИИ</b>\nВыберите нужный режим:",
+        reply_markup=kb_ai_modes(),
+        parse_mode="HTML",
+    )    
+
+# [HANDLER — ОТКРЫТЬ "О НАС"]
+@dp.callback_query(F.data == "open_about")
+async def open_about_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    await callback.message.edit_text(
+        "<b>ℹ️ О нас</b>\n\n"
+        "Здесь вы найдёте ответы на частые вопросы и сможете посмотреть презентацию проекта.",
+        reply_markup=kb_about(),
+        parse_mode="HTML",
+    )
+
+# [HANDLER — НАЗАД В ГЛАВНОЕ МЕНЮ]
+@dp.callback_query(F.data == "back_to_main")
+async def back_to_main_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    await callback.message.edit_text(
+        "🏠 Главное меню:",
+        reply_markup=kb_start(callback.from_user.id),
+        parse_mode="HTML",
+    )
+
+@dp.callback_query(F.data == "admin_panel_open")
+async def admin_panel_open_cb(callback: types.CallbackQuery):
+    uid = callback.from_user.id
+    if not is_admin(uid):
+        await _safe_cb_answer(callback, "Доступно только администратору.", show_alert=True)
+        return
+    await _safe_cb_answer(callback)
+    # показываем готовую клавиатуру админ-панели
+    await callback.message.edit_text(
+        "<b>🛡️ Админ панель</b>",
+        reply_markup=kb_admin_panel(),
+        parse_mode="HTML",
+    )    
+
+# [HANDLER — ОТКРЫТЬ FAQ]
+@dp.callback_query(F.data == "open_faq")
+async def open_faq_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    await callback.message.edit_text(
+        "<b>❓ FAQ</b>\n\n"
+        "• Как оплатить? — Через Boosty, СБП или карту.\n"
+        "• Как получить материалы? — После оплаты бот откроет доступ автоматически.\n"
+        "• Как связаться с поддержкой? — Кнопка «Поддержка» или /support.\n",
+        reply_markup=kb_about(),
+        parse_mode="HTML",
+    )
+
+# [HANDLER — ОТПРАВИТЬ ПРЕЗЕНТАЦИЮ]
+@dp.callback_query(F.data == "open_presentation")
+async def open_presentation_cb(callback: types.CallbackQuery):
+    await _safe_cb_answer(callback)
+    # сначала пробуем по file_id (если кэшируешь заранее), иначе по пути к файлу
+    PRESENTATION_FILE_ID = os.getenv("PRESENTATION_FILE_ID", "").strip()
+    PRESENTATION_PATH = os.getenv("PRESENTATION_PATH", "files/AI_Business_Kit_Presentation.pdf").strip()
+
+    try:
+        if PRESENTATION_FILE_ID:
+            await callback.message.answer_document(
+                document=PRESENTATION_FILE_ID,
+                caption="<b>📘 Презентация AI Business Kit</b>\nКраткий обзор комплекта и преимуществ.",
+                parse_mode="HTML",
+            )
+        else:
+            await callback.message.answer_document(
+                document=types.FSInputFile(PRESENTATION_PATH),
+                caption="<b>📘 Презентация AI Business Kit</b>\nКраткий обзор комплекта и преимуществ.",
+                parse_mode="HTML",
+            )
+    except Exception as e:
+        logging.warning(f"[presentation] send failed: {e}")
+        await callback.message.answer(
+            "⚠️ Не удалось отправить файл презентации. Попробуйте позже.",
+            parse_mode="HTML",
+        )    
+
+@dp.callback_query(F.data == "ai_standard_open")
+async def ai_standard_open_cb(callback: types.CallbackQuery, state: FSMContext):
+    if not is_user_verified(callback.from_user.id):
+        await _safe_cb_answer(callback, "Доступно после оплаты.", show_alert=True)
         return
     await _safe_cb_answer(callback)
     await state.set_state(AIChatStates.chatting)
-    await state.update_data(ai_is_admin=False)
+    await state.update_data(ai_is_admin=False, ai_mode="standard")
     await callback.message.answer(
-        "🤖 Готов к диалогу. Напиши вопрос про набор, запуск, маркетинг и т. п.",
-        reply_markup=kb_ai_chat(is_admin=False), parse_mode="HTML"
+        "🤖 Стандарт GPT активен. Напишите запрос:",
+        reply_markup=kb_ai_chat(is_admin=False),
+        parse_mode="HTML",
     )
 
-@dp.callback_query(F.data == "ai_demo_open")
-async def ai_demo_open_cb(callback: types.CallbackQuery, state: FSMContext):
-    # без проверки оплаты
+@dp.callback_query(F.data == "ai_generator_open")
+async def ai_generator_open_cb(callback: types.CallbackQuery, state: FSMContext):
+    if not is_user_verified(callback.from_user.id):
+        await _safe_cb_answer(callback, "Доступно после оплаты.", show_alert=True)
+        return
     await _safe_cb_answer(callback)
     await state.set_state(AIChatStates.chatting)
-    # явный флаг демо, чтобы не зависеть от статуса верификации
-    await state.update_data(ai_is_admin=False, ai_force_demo=True)
+    await state.update_data(ai_is_admin=False, ai_mode="generator")
     await callback.message.answer(
-        f"🤖 Демо-режим ИИ включён.\n"
-        f"Доступно до {DEMO_AI_DAILY_LIMIT} сообщений в день.\n"
-        "Спросите что-нибудь про набор, установку бота или маркетинг.",
+        "⚡ Генератор включён. Кратко опишите задачу — получите готовый результат.",
         reply_markup=kb_ai_chat(is_admin=False),
-        parse_mode="HTML"
-    )        
+        parse_mode="HTML",
+    )               
 
 @dp.callback_query(F.data == "ai_admin_open")
 async def ai_admin_open_cb(callback: types.CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
-        await _safe_cb_answer(callback, "❌ Нет доступа", show_alert=True)
+    uid = callback.from_user.id
+
+    if not is_admin(uid):
+        await _safe_cb_answer(callback, "Только для администраторов.", show_alert=True)
         return
+
+    # ⛔️ Анти-спам: если админ слишком часто нажимает
+    if _admin_ai_too_fast(uid):
+        await _safe_cb_answer(callback, "Слишком часто. Подожди секунду.")
+        return
+
     await _safe_cb_answer(callback)
     await state.set_state(AIChatStates.chatting)
-    await state.update_data(ai_is_admin=True)
+    await state.update_data(ai_is_admin=True, ai_mode="admin")
     await callback.message.answer(
-        "🤖 ИИ (админ): готов. Спрашивай по коду/логике/базе.",
-        reply_markup=kb_ai_chat(is_admin=True), parse_mode="HTML"
+        "🧠 Режим «ИИ для админа» активен. Опиши задачу: логи, деплой, .env, вебхук, платежи, UX — разберём по шагам.",
+        reply_markup=kb_ai_chat(is_admin=True),
+        parse_mode="HTML",
     )
 
 @dp.callback_query(F.data == "ai_close")
@@ -2200,82 +2128,6 @@ async def _safe_send_answer(msg: types.Message, text: str, markup=None):
         plain = re.sub(r"<[^>]+>", "", text or "")
         await msg.answer(plain, reply_markup=markup)
 
-
-def kb_ai_chat_compact(is_admin: bool) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="⚡ Генератор", callback_data="ai_mode_universal"),
-            InlineKeyboardButton(text="🛠 Установка", callback_data="ai_mode_setup"),
-            InlineKeyboardButton(text="ℹ️ О продукте", callback_data="ai_mode_brand"),
-            InlineKeyboardButton(text="💳 Оплата",     callback_data="ai_mode_pay"),
-        ],
-        [
-            InlineKeyboardButton(
-                text=("⛔ Завершить (админ)" if is_admin else "⏹️ Завершить чат"),
-                callback_data=("ai_admin_close" if is_admin else "ai_close")
-            ),
-            InlineKeyboardButton(text="↩️ Домой", callback_data="back_home_min"),
-        ]
-    ])
-
-@dp.callback_query(F.data == "ai_chat_open")
-async def ai_chat_open_cb(callback: types.CallbackQuery, state: FSMContext):
-    await _safe_cb_answer(callback)
-    uid = callback.from_user.id
-    is_admin = ('ADMIN_ID' in globals() and uid == ADMIN_ID)
-    await state.set_state(AIChatStates.chatting)
-    await state.update_data(ai_is_admin=is_admin, ai_mode="universal", ai_force_demo=(not is_user_verified(uid)))
-    demo_line = ""
-    try:
-        if not is_user_verified(uid) and DEMO_AI_ENABLED:
-            demo_line = f"\n🧪 Демо: до {DEMO_AI_DAILY_LIMIT} сообщений/день."
-    except NameError:
-        pass
-    text = (
-        "🤖 <b>ИИ‑помощник</b>\n"
-        "Спроси — получишь готовый результат: тексты, планы, шаги." + demo_line
-    )
-    await safe_edit(
-        callback.message,
-        text=text if callback.message.text is not None else None,
-        caption=text if callback.message.caption is not None else None,
-        reply_markup=kb_ai_chat_compact(is_admin=is_admin),
-        parse_mode="HTML",
-    )
-
-@dp.callback_query(F.data.regexp(r"^ai_mode_(universal|setup|brand|pay)$"))
-async def ai_mode_switch_cb(callback: types.CallbackQuery, state: FSMContext):
-    await _safe_cb_answer(callback)
-    mode = callback.data.split("_", 2)[-1]
-    uid = callback.from_user.id
-    verified = is_user_verified(uid)
-    if mode in ("universal", "setup") and not verified:
-        try:
-            if DEMO_AI_ENABLED:
-                await state.update_data(ai_mode=mode, ai_force_demo=True)
-                await bot.send_message(callback.message.chat.id, "🧪 Демо-режим активен. Полный доступ после оплаты.", parse_mode="HTML")
-            else:
-                await bot.send_message(callback.message.chat.id, "⚠️ Полный доступ к этому режиму после оплаты.", parse_mode="HTML")
-                return
-        except NameError:
-            await bot.send_message(callback.message.chat.id, "⚠️ Полный доступ к этому режиму после оплаты.", parse_mode="HTML")
-            return
-    else:
-        await state.update_data(ai_mode=mode, ai_force_demo=False)
-    titles = {"universal": "⚡ Генератор", "setup": "🛠 Установка", "brand": "ℹ️ О продукте", "pay": "💳 Оплата"}
-    hints = {
-        "universal": "Попросите: «план контента», «пост», «письмо», «идея продукта».",
-        "setup": "Спросите про .env, вебхук Render, логи, FSM.",
-        "brand": "Спросите: что внутри набора и кому подходит.",
-        "pay": "Спросите: как оплатить и что дальше."
-    }
-    await bot.send_message(
-        callback.message.chat.id,
-        f"🔁 Режим: <b>{titles.get(mode, mode)}</b>\n{hints.get(mode, '')}",
-        parse_mode="HTML"
-    )
-
-
 @dp.message(AIChatStates.chatting, F.text & ~F.text.startswith("/"))
 async def ai_chat_handler(message: types.Message, state: FSMContext):
     logging.info("[AI-HANDLER] enter uid=%s text_len=%s", message.from_user.id, len(message.text or ""))
@@ -2286,6 +2138,11 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
     user_text = (message.text or "").strip()
     if not user_text:
         return
+
+    # ✅ БЛОК ПРОВЕРКИ ПРАВ ДОСТУПА ДЛЯ АДМИН-ИИ
+    if ai_mode == "admin" and not is_admin(uid):
+        await message.answer("❌ Этот режим доступен только администраторам.", parse_mode="HTML")
+        return    
 
     # до оплаты демо только для консультанта/универсала; brand/pay — без лимитов
     verified = is_user_verified(uid)  # sync
@@ -2308,15 +2165,18 @@ async def ai_chat_handler(message: types.Message, state: FSMContext):
 
     # Подмена системного промпта под режим
     if msgs and msgs[0].get("role") == "system":
-        if      ai_mode == "universal":
-            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_UNIVERSAL_RAW, user_id=uid, is_admin=is_admin)
-        elif    ai_mode == "brand":
-            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_BRAND_RAW, user_id=uid, is_admin=is_admin)
-        elif    ai_mode == "pay":
-            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_PAY_RAW, user_id=uid, is_admin=is_admin)
-        elif    ai_mode == "setup":  # 🆕 режим «По установке бота»
+        if   ai_mode == "demo":
+            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_DEMO_RAW, user_id=uid, is_admin=is_admin)
+        elif ai_mode == "standard":
+            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_STANDARD_RAW, user_id=uid, is_admin=is_admin)
+        elif ai_mode == "generator":
+            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_GENERATOR_RAW, user_id=uid, is_admin=is_admin)
+        elif ai_mode == "setup":
             msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_SETUP_RAW, user_id=uid, is_admin=is_admin)
-        # else: консультант — остаётся базовый system
+        elif ai_mode == "admin":  # ⬅️ новое
+            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_ADMIN_RAW, user_id=uid, is_admin=is_admin)
+        else:
+            msgs[0]["content"] = _fmt_prompt(AI_SYSTEM_PROMPT_DEMO_RAW, user_id=uid, is_admin=is_admin)
 
     # «печатает…»
     with suppress(Exception):
@@ -2377,16 +2237,66 @@ async def ai_open_cmd(message: types.Message, state: FSMContext):
 # ---------------------------
 # «НАЗАД В ГЛАВНОЕ»
 # ---------------------------
-
 @dp.callback_query(F.data == "back_to_main")
 async def back_to_main_cb(callback: types.CallbackQuery):
     await _safe_cb_answer(callback)
-    await safe_edit(
-        callback.message,
-        text="🏠 Главное меню:",
-        reply_markup=kb_main_min(callback.from_user.id),
-        parse_mode="HTML",
+
+    PRESENTATION_FILE_ID = os.getenv("PDF_PRESENTATION_FILE_ID")
+    PRESENTATION_URL = os.getenv("PDF_PRESENTATION_URL")
+
+    text = (
+        "👋 <b>Добро пожаловать в AI Business Kit</b>\n\n"
+        "📘 <b>Краткая презентация + инструкция</b>\n"
+        "Узнай, как создать свой цифровой продукт с ИИ за один вечер 🚀\n\n"
+        "💡 Набор поможет вам:\n"
+        "• Автоматизировать рутину и сэкономить время\n"
+        "• Создавать контент и идеи для бизнеса\n"
+        "• Запустить собственного Telegram-бота без кода\n"
+        "• Начать зарабатывать на продаже AI-решений\n\n"
+        "🚀 <b>Что вы получите:</b>\n"
+        "• 100 ChatGPT-промптов для бизнеса\n"
+        "• Шаблон Telegram-бота с CRM\n"
+        "• Пошаговый PDF-гайд по запуску (10 минут)\n\n"
+        f"💵 <b>Стоимость:</b> {SBP_PRICE_RUB} ₽\n\n"
+        "Как получить:\n"
+        "1️⃣ Нажмите «Оплата по СБП (QR)» и оплатите\n"
+        "2️⃣ Нажмите «✅ Я оплатил(а)»\n"
+        "3️⃣ Отправьте скриншот чека для подтверждения\n\n"
+        "⏱️ Проверка занимает обычно 5–15 минут"
     )
+
+    try:
+        # Сначала пробуем отправить презентацию
+        if PRESENTATION_FILE_ID:
+            await callback.message.answer_document(
+                document=PRESENTATION_FILE_ID,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=_menu_kb_for(callback.from_user.id)
+            )
+        elif PRESENTATION_URL:
+            await callback.message.answer_document(
+                document=PRESENTATION_URL,
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=_menu_kb_for(callback.from_user.id)
+            )
+        else:
+            # Если нет файла вообще — просто текст
+            await callback.message.answer(
+                text,
+                parse_mode="HTML",
+                reply_markup=_menu_kb_for(callback.from_user.id)
+            )
+
+    except Exception as e:
+        logging.warning(f"[BACK_TO_MAIN] failed to send presentation: {e}")
+        # fallback — текст, если документ не загрузился
+        await callback.message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=_menu_kb_for(callback.from_user.id)
+        )
 
 # ---------------------------
 # АДМИН: /admin + общий рендер панели
@@ -2881,49 +2791,71 @@ VERIFICATION_TEXT = (
     "После оплаты пришлите скрин/чек ответом на это сообщение — подтвердим и вышлем все файлы."
 )
 
+@dp.callback_query(F.data == "pay_unified_open")
+async def pay_unified_open_cb(callback: types.CallbackQuery, state: FSMContext):
+    import os, time, random, logging
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-
-@dp.callback_query(F.data == "pay_open")
-async def pay_open_cb(callback: types.CallbackQuery, state: FSMContext):
-    await _safe_cb_answer(callback)
     uid = callback.from_user.id
-    uname = (callback.from_user.username or "без_username").strip()
-
-    if is_user_verified(uid):
-        await safe_edit(
-            callback.message,
-            text="✅ Доступ уже активирован.",
-            reply_markup=kb_after_payment(is_admin=('ADMIN_ID' in globals() and uid == ADMIN_ID)),
-            parse_mode="HTML",
-        )
-        return
-
-    save_pending_user(uid, uname)
-    text = (
-        "<b>Оплата доступа</b>\n\n"
-        "1) Нажмите «Оплатить по СБП (QR)».\n"
-        "2) Затем — «📸 Отправить чек».\n"
-        "3) Подтвердим и пришлём материалы."
-    )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить по СБП (QR)", url=(SBP_QR_URL if 'SBP_QR_URL' in globals() and SBP_QR_URL else "https://example.com/pay"))],
-        [InlineKeyboardButton(text="📸 Отправить чек", callback_data="pay_send_receipt")],
-        [InlineKeyboardButton(text="↩️ Домой", callback_data="back_home_min")]
-    ])
-    await safe_edit(
-        callback.message,
-        text=text if callback.message.text is not None else None,
-        caption=text if callback.message.caption is not None else None,
-        reply_markup=kb,
-        parse_mode="HTML",
-    )
-
-@dp.callback_query(F.data == "pay_send_receipt")
-async def pay_send_receipt_cb(callback: types.CallbackQuery, state: FSMContext):
+    uname = callback.from_user.username or ""
     await _safe_cb_answer(callback)
-    await state.set_state(PaymentStates.waiting_screenshot)
-    await bot.send_message(callback.from_user.id, "📸 Пришлите скрин/чек одним фото в ответ на это сообщение.", parse_mode="HTML")
 
+    # 1) Создаём/фиксируем order_id
+    order_id = f"sbp-{uid}-{int(time.time())}-{random.randint(100,999)}"
+    await state.set_state(PaymentStates.waiting_screenshot)
+    await state.update_data(order_id=order_id, user_id=uid, username=uname, is_support=False)
+
+    # 2) Готовим текст и env
+    SBP_QR_URL = (os.getenv("SBP_QR_URL") or "").strip()
+    SBP_QR_FILE_ID = (os.getenv("SBP_QR_FILE_ID") or "").strip()
+    SBP_QR_PATH = (os.getenv("SBP_QR_PATH") or "files/sbp_qr.png").strip()
+
+    parts = [
+        "<b>💳 Оплата и проверка</b>",
+        "",
+        "1) Оплатите по СБП (QR ниже или кнопка).",
+        "2) После оплаты <b>пришлите скрин платежа</b> сюда в чат.",
+        f"3) Номер заказа: <code>{order_id}</code> — укажите в сообщении при необходимости.",
+        "",
+        "После проверки админом доступ откроется автоматически.",
+    ]
+    if SBP_QR_URL:
+        parts.append(f"🔗 Ссылка на оплату: {SBP_QR_URL}")
+
+    text = "\n".join(parts)
+
+    # 3) Клавиатура
+    kb_rows = []
+    if SBP_QR_URL:
+        kb_rows.append([InlineKeyboardButton(text="💳 Оплатить по СБП", url=SBP_QR_URL)])
+    kb_rows.append([InlineKeyboardButton(text="↩️ Назад", callback_data="back_to_main")])
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+    # 4) Отправляем текст
+    await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+    # 5) Отправляем QR (умный фолбэк: file_id → файл → текст)
+    try:
+        if SBP_QR_FILE_ID:
+            await callback.message.answer_photo(
+                photo=SBP_QR_FILE_ID,
+                caption="Отсканируйте QR для оплаты по СБП.",
+                parse_mode="HTML",
+            )
+        else:
+            try:
+                await callback.message.answer_photo(
+                    photo=types.FSInputFile(SBP_QR_PATH),
+                    caption="Отсканируйте QR для оплаты по СБП.",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                await callback.message.answer(
+                    "⚠️ QR сейчас недоступен, используйте ссылку «Оплатить по СБП» выше.",
+                    parse_mode="HTML"
+                )
+    except Exception as e:
+        logging.warning(f"[pay_unified] QR send failed: {e}")
 
 @dp.message(PaymentStates.waiting_screenshot, F.photo)
 async def process_screenshot(message: types.Message, state: FSMContext):
@@ -4057,9 +3989,8 @@ async def get_files_again_cb(callback: types.CallbackQuery):
         logging.warning("Не удалось уведомить админа о повторной выдаче: %s", e)
 
 # ---------------------------
-# Оплата: если пришёл не скрин (док/текст) в ожидании скрина
+# Вспомогательные команды
 # ---------------------------
-
 @dp.message(Command("endchat"))
 async def endchat_cmd(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
@@ -4201,104 +4132,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("👋 Stopped by sarkis_20032")
-
-
-
-def kb_main_min(user_id: int) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="💳 Получить доступ", callback_data="pay_open")],
-        [InlineKeyboardButton(text="🤖 ИИ-помощник",     callback_data="ai_chat_open")],
-        [InlineKeyboardButton(text="💬 Поддержка",       callback_data="support_request")],
-        [InlineKeyboardButton(text="ℹ️ Что внутри набора?", callback_data="kit_inside")],
-        # ▼ новая маленькая кнопка без «шума»
-        [InlineKeyboardButton(text="📄 Презентация", callback_data="open_presentation")],
-    ]
-    if 'ADMIN_ID' in globals() and user_id == ADMIN_ID:
-        rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin_home")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-    @dp.callback_query(F.data == "kit_inside")
-    async def kit_inside_cb(callback: types.CallbackQuery):
-        await _safe_cb_answer(callback)
-        text = (
-            "📦 <b>Внутри набора</b>\n"
-            "• 100 промптов для бизнеса\n"
-            "• Шаблон Telegram-бота\n"
-            "• PDF-гайд (10 мин)\n"
-            "• README и .env.example"
-        )
-        await safe_edit(
-            callback.message,
-            text=text if callback.message.text is not None else None,
-            caption=text if callback.message.caption is not None else None,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📄 Открыть презентацию", callback_data="open_presentation")],
-                [InlineKeyboardButton(text="📎 Скачать PDF", callback_data="download_presentation")],
-                [InlineKeyboardButton(text="💳 Получить доступ", callback_data="pay_open")],
-                [InlineKeyboardButton(text="↩️ Домой", callback_data="back_home_min")]
-            ]),
-            parse_mode="HTML",
-        )
-
-# ===== Презентация: открыть / скачать =====
-
-def _compose_presentation_text() -> str:
-    # Короткий «питч» + ссылка/объяснение
-    brand = globals().get("BRAND_NAME", "AI Business Kit")
-    url = globals().get("PDF_PRESENTATION_URL") or globals().get("BRAND_URL") or "https://example.com"
-    return (
-        f"📄 <b>Презентация — {brand}</b>\n"
-        "Кратко, по делу: что внутри набора и как он помогает.\n\n"
-        f"Открыть онлайн: {url}"
-    )
-
-async def _show_presentation(chat_id: int, as_edit: types.Message | None = None):
-    text = _compose_presentation_text()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📎 Скачать PDF", callback_data="download_presentation")],
-        [InlineKeyboardButton(text="↩️ Домой", callback_data="back_home_min")],
-    ])
-    if as_edit:
-        await safe_edit(
-            as_edit,
-            text=text if as_edit.text is not None else None,
-            caption=text if as_edit.caption is not None else None,
-            reply_markup=kb,
-            parse_mode="HTML",
-        )
-    else:
-        await bot.send_message(chat_id, text, reply_markup=kb, parse_mode="HTML")
-
-@dp.callback_query(F.data == "open_presentation")
-async def open_presentation_cb(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    await _show_presentation(callback.message.chat.id, as_edit=callback.message)
-
-@dp.callback_query(F.data == "download_presentation")
-async def download_presentation_cb(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    file_id = globals().get("PDF_PRESENTATION_FILE_ID")
-    if file_id:
-        with suppress(Exception):
-            await bot.send_document(
-                callback.from_user.id,
-                document=file_id,
-                caption="📎 Презентация (PDF)",
-                parse_mode="HTML"
-            )
-            return
-    # Fallback: если файла нет, даём ссылку
-    url = globals().get("PDF_PRESENTATION_URL") or globals().get("BRAND_URL") or "https://example.com"
-    await bot.send_message(callback.from_user.id, f"📎 Скачать PDF: {url}", disable_web_page_preview=False)    
-
-@dp.callback_query(F.data == "back_home_min")
-async def back_home_min_cb(callback: types.CallbackQuery):
-    await _safe_cb_answer(callback)
-    await safe_edit(
-        callback.message,
-        text="🏠 Главное меню:",
-        reply_markup=kb_main_min(callback.from_user.id),
-        parse_mode="HTML",
-    )
-
-
